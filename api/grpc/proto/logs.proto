@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package logapi;
+option go_package = "github.com/Saumya40-codes/LogsGO/api/grpc/pb;logapi";
+
+service LogIngestor {
+    rpc UploadLog(LogEntry) returns (UploadResponse);
+}
+
+message LogEntry {
+  string service = 1;
+  string level = 2;
+  string message = 3;
+  int64 timestamp = 4;
+}
+
+message UploadResponse {
+  bool success = 1;
+}
