@@ -29,7 +29,7 @@ func NewLogIngestorServer(logDir string, maxTimeMem string) *LogIngestorServer {
 		logDir:   logDir,
 		shutdown: make(chan struct{}),
 	}
-	go server.periodicFlush(1 * time.Hour)
+	go server.periodicFlush(pkg.GetTimeDuration(maxTimeMem))
 	return server
 }
 
