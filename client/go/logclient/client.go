@@ -3,7 +3,6 @@ package logclient
 import (
 	"context"
 	"log"
-	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"google.golang.org/grpc"
@@ -20,10 +19,9 @@ func UploadLogs() bool {
 
 	lc := logapi.NewLogIngestorClient(conn)
 	res, err := lc.UploadLog(context.Background(), &logapi.LogEntry{
-		Service:   "ap-south1",
-		Level:     "info",
-		Message:   "New Endpoint Discovered",
-		Timestamp: time.Now().Unix(),
+		Service: "ap-south1",
+		Level:   "info",
+		Message: "New Endpoint Discovered",
 	})
 
 	return res.Success
