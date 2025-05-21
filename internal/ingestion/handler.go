@@ -24,7 +24,7 @@ type LogIngestorServer struct {
 	shutdown chan struct{}
 }
 
-func NewLogIngestorServer(logDir string) *LogIngestorServer {
+func NewLogIngestorServer(logDir string, maxTimeMem string) *LogIngestorServer {
 	server := &LogIngestorServer{
 		logDir:   logDir,
 		shutdown: make(chan struct{}),
@@ -40,7 +40,7 @@ func StartServer(factory *pkg.IngestionFactory) {
 	}
 
 	s := grpc.NewServer()
-	server := NewLogIngestorServer(factory.DataDir)
+	server := NewLogIngestorServer(factory.DataDir, factory.MaxTimeInMem)
 	logapi.RegisterLogIngestorServer(s, server)
 
 	log.Printf("gRPC server listening at %v", lis.Addr())
@@ -81,7 +81,7 @@ func (s *LogIngestorServer) flushToDisk() {
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 	filename := filepath.Join(s.logDir, "logs_"+timestamp+".json")
 
-	if err := os.MkdirAll(s.logDir, 0755); err != nil {
+	if err := os.MkdirAll(s.logDir, 0o755); err != nil {
 		log.Printf("failed to create log directory: %v", err)
 		return
 	}
