@@ -1,11 +1,13 @@
 package pkg
 
 type IngestionFactory struct {
-	DataDir string
+	DataDir          string
+	MaxRetentionTime string
 }
 
-func NewIngestionFactory(dir string) *IngestionFactory {
+func NewIngestionFactory(dir string, maxRetention string) *IngestionFactory {
 	return &IngestionFactory{
-		DataDir: dir,
+		DataDir:          dir,
+		MaxRetentionTime: maxRetention,
 	}
 }
