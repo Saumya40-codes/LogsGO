@@ -9,20 +9,39 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func UploadLogs() bool {
+type Client struct {
+	conn   *grpc.ClientConn
+	client logapi.LogIngestorClient
+}
+
+// NewClient creates a new gRPC client to the log server.
+func NewLogClient(ctx context.Context) (*Client, error) {
 	conn, err := grpc.NewClient("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("failed to connect to gRPC server at localhost:50051: %v", err)
+		return nil, err
 	}
 
-	defer conn.Close()
+	return &Client{
+		conn:   conn,
+		client: logapi.NewLogIngestorClient(conn),
+	}, nil
+}
 
-	lc := logapi.NewLogIngestorClient(conn)
-	res, err := lc.UploadLog(context.Background(), &logapi.LogEntry{
-		Service: "ap-south1",
-		Level:   "info",
-		Message: "New Endpoint Discovered",
+// Close closes the underlying gRPC connection.
+func (c *Client) Close() error {
+	return c.conn.Close()
+}
+
+// UploadLog sends a log entry to the server.
+func (c *Client) UploadLog(opts *Opts) bool {
+	res, err := c.client.UploadLog(context.Background(), &logapi.LogEntry{
+		Service: opts.Service,
+		Level:   opts.Level,
+		Message: opts.Message,
 	})
-
+	if err != nil {
+		log.Printf("Uploading of log failed: %v", err)
+		return false
+	}
 	return res.Success
 }
