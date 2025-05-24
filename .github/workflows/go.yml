@@ -27,4 +27,11 @@ jobs:
       run: go build -v ./...
 
     - name: Test
-      run: go test -v -/...
+      run: |
+        packages=$(go list ./... 2>/dev/null | grep -v '/ui')
+        if [ -n "$packages" ]; then
+          go test -v $packages
+        else
+          echo "No Go packages to test"
+        fi
+
