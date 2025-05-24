@@ -3,15 +3,16 @@ package ingestion
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/grpc"
 )
 
@@ -21,6 +22,7 @@ type LogIngestorServer struct {
 	mu       sync.Mutex
 	logs     []*logapi.LogEntry
 	logDir   string
+	db       *badger.DB
 	shutdown chan struct{}
 }
 
@@ -29,23 +31,46 @@ func NewLogIngestorServer(logDir string, maxTimeMem string) *LogIngestorServer {
 		logDir:   logDir,
 		shutdown: make(chan struct{}),
 	}
+	badgerOpts := badger.DefaultOptions(filepath.Join(logDir, "index"))
+	badgerOpts.Logger = nil
+	db, err := badger.Open(badgerOpts)
+	if err != nil {
+		log.Fatalf("Failed to open db %v", err)
+	}
+	server.db = db
 	go server.periodicFlush(pkg.GetTimeDuration(maxTimeMem))
 	return server
 }
 
-func StartServer(factory *pkg.IngestionFactory) {
+func StartServer(ctx context.Context, factory *pkg.IngestionFactory) {
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("failed to listen on port 50051: %v", err)
 	}
+	defer lis.Close()
 
 	s := grpc.NewServer()
 	server := NewLogIngestorServer(factory.DataDir, factory.MaxTimeInMem)
 	logapi.RegisterLogIngestorServer(s, server)
 
-	log.Printf("gRPC server listening at %v", lis.Addr())
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+	// Run server in goroutine
+	go func() {
+		log.Printf("gRPC server listening at %v", lis.Addr())
+		if err := s.Serve(lis); err != nil {
+			log.Printf("failed to serve: %v", err)
+		}
+	}()
+
+	// Wait for cancellation or signal
+	select {
+	case <-ctx.Done():
+		log.Println("Context cancelled. Shutting down...")
+		s.GracefulStop()
+		server.shutdown <- struct{}{}
+		time.Sleep(2 * time.Second) // looks safe
+		server.db.Close()
+		log.Println("Server exited")
+		time.Sleep(1 * time.Second)
 	}
 }
 
@@ -78,27 +103,18 @@ func (s *LogIngestorServer) flushToDisk() {
 		return
 	}
 
-	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	filename := filepath.Join(s.logDir, "logs_"+timestamp+".json")
-
-	if err := os.MkdirAll(s.logDir, 0o755); err != nil {
-		log.Printf("failed to create log directory: %v", err)
-		return
-	}
-
-	file, err := os.Create(filename)
-	if err != nil {
-		log.Printf("failed to create log file: %v", err)
-		return
-	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
 	for _, entry := range logsToFlush {
-		if err := encoder.Encode(entry); err != nil {
-			log.Printf("failed to encode log: %v", err)
+		key := fmt.Sprintf("%d|%s|%s|%s", time.Now().Unix(), entry.Level, entry.Service, entry.Message)
+
+		val, _ := json.Marshal(entry)
+		err := s.db.Update(func(txn *badger.Txn) error {
+			return txn.Set([]byte(key), val)
+		})
+		if err != nil {
+			log.Printf("Failed to write to Badger: %v", err)
 		}
 	}
 
-	log.Printf("Flushed %d logs to %s", len(logsToFlush), filename)
+	log.Printf("Flushed %d logs to db", len(logsToFlush))
+	s.logs = s.logs[:0]
 }

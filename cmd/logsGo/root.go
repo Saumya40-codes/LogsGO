@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"unicode"
 
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
@@ -29,7 +33,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ingestion.StartServer(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		select {
+		case <-ch:
+			cancel()
+		}
+	}()
+
+	ingestion.StartServer(ctx, cfg)
 }
 
 func validateTimeDurations(dur string) bool {
