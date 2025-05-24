@@ -104,7 +104,7 @@ func (s *LogIngestorServer) flushToDisk() {
 	}
 
 	for _, entry := range logsToFlush {
-		key := fmt.Sprintf("%d|%s|%s|%s", time.Now().Unix(), entry.Level, entry.Service, entry.Message)
+		key := fmt.Sprintf("%d|%s|%s|%s", entry.Timestamp, entry.Level, entry.Service, entry.Message)
 
 		val, _ := json.Marshal(entry)
 		err := s.db.Update(func(txn *badger.Txn) error {

@@ -26,6 +26,7 @@ type LogEntry struct {
 	Service       string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
 	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
 	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -81,6 +82,13 @@ func (x *LogEntry) GetMessage() string {
 	return ""
 }
 
+func (x *LogEntry) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
 type UploadResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
@@ -130,11 +138,12 @@ var File_logs_proto protoreflect.FileDescriptor
 const file_logs_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"logs.proto\x12\x06logapi\"T\n" +
+	"logs.proto\x12\x06logapi\"r\n" +
 	"\bLogEntry\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"*\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"*\n" +
 	"\x0eUploadResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess2D\n" +
 	"\vLogIngestor\x125\n" +
