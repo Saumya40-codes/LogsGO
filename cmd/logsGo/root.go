@@ -24,7 +24,7 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.DataDir, "data-dir", "data", "Data directory path to store logs data. Default value is ./data")
 	rootCmd.Flags().StringVar(&cfg.MaxRetentionTime, "max-retention-time", "10d", "Maximum time chunks blocks will remain in disk, default is 10d. \nSuffix the number with d->days m->months h->hours s->seconds")
 	rootCmd.Flags().StringVar(&cfg.MaxTimeInMem, "max-time-in-mem", "1h", "Maximum time logs are in main memory, after which gets persisted to disk, default is 1h")
-
+	rootCmd.Flags().BoolVar(&cfg.LockDataDir, "unlock-data-dir", false, "Use if you want to keep data directory unlocked for other process to perform operation on it. \n [WARNING] Recommended not to.")
 	if !validateTimeDurations(cfg.MaxRetentionTime) || !validateTimeDurations(cfg.MaxTimeInMem) {
 		log.Fatal("Invalid time duration set")
 	}

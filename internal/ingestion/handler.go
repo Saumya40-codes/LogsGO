@@ -7,6 +7,8 @@ import (
 	"log"
 	"net"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,12 +28,20 @@ type LogIngestorServer struct {
 	shutdown chan struct{}
 }
 
-func NewLogIngestorServer(logDir string, maxTimeMem string) *LogIngestorServer {
+type LogFilter struct {
+	MinTimestamp time.Time
+	MaxTimestamp time.Time
+	Level        string
+	Service      string
+	Keyword      string
+}
+
+func NewLogIngestorServer(logDir string, maxTimeMem string, lockDataDir bool) *LogIngestorServer {
 	server := &LogIngestorServer{
 		logDir:   logDir,
 		shutdown: make(chan struct{}),
 	}
-	badgerOpts := badger.DefaultOptions(filepath.Join(logDir, "index"))
+	badgerOpts := badger.DefaultOptions(filepath.Join(logDir, "index")).WithBypassLockGuard(lockDataDir)
 	badgerOpts.Logger = nil
 	db, err := badger.Open(badgerOpts)
 	if err != nil {
@@ -50,7 +60,7 @@ func StartServer(ctx context.Context, factory *pkg.IngestionFactory) {
 	defer lis.Close()
 
 	s := grpc.NewServer()
-	server := NewLogIngestorServer(factory.DataDir, factory.MaxTimeInMem)
+	server := NewLogIngestorServer(factory.DataDir, factory.MaxTimeInMem, factory.LockDataDir)
 	logapi.RegisterLogIngestorServer(s, server)
 
 	// Run server in goroutine
@@ -117,4 +127,51 @@ func (s *LogIngestorServer) flushToDisk() {
 
 	log.Printf("Flushed %d logs to db", len(logsToFlush))
 	s.logs = s.logs[:0]
+}
+
+func (s *LogIngestorServer) QueryLogs(filter LogFilter) ([]*logapi.LogEntry, error) {
+	var result []*logapi.LogEntry
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			key := string(item.Key())
+			tokens := strings.Split(key, "|")
+
+			t, _ := strconv.ParseInt(tokens[0], 10, 64)
+			level := tokens[1]
+			service := tokens[2]
+			msg := tokens[3]
+
+			if filter.Level != "" && filter.Level != level {
+				continue
+			}
+			if filter.Service != "" && filter.Service != service {
+				continue
+			}
+			if filter.Keyword != "" && !strings.Contains(msg, filter.Keyword) {
+				continue
+			}
+			if time.Unix(t, 0).Before(filter.MinTimestamp) || time.Unix(t, 0).After(filter.MaxTimestamp) {
+				continue
+			}
+
+			err := item.Value(func(val []byte) error {
+				var entry logapi.LogEntry
+				if err := json.Unmarshal(val, &entry); err == nil {
+					result = append(result, &entry)
+				}
+				return nil
+			})
+			if err != nil {
+				log.Printf("Value error: %v", err)
+			}
+		}
+		return nil
+	})
+
+	return result, err
 }
