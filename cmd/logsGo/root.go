@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"unicode"
 
+	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/spf13/cobra"
@@ -24,7 +25,7 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.DataDir, "data-dir", "data", "Data directory path to store logs data. Default value is ./data")
 	rootCmd.Flags().StringVar(&cfg.MaxRetentionTime, "max-retention-time", "10d", "Maximum time chunks blocks will remain in disk, default is 10d. \nSuffix the number with d->days m->months h->hours s->seconds")
 	rootCmd.Flags().StringVar(&cfg.MaxTimeInMem, "max-time-in-mem", "1h", "Maximum time logs are in main memory, after which gets persisted to disk, default is 1h")
-	rootCmd.Flags().BoolVar(&cfg.LockDataDir, "unlock-data-dir", false, "Use if you want to keep data directory unlocked for other process to perform operation on it. \n [WARNING] Recommended not to.")
+	rootCmd.Flags().BoolVar(&cfg.UnLockDataDir, "unlock-data-dir", false, "Use if you want to keep data directory unlocked for other process to perform operation on it. \n [WARNING] Recommended not to.")
 	if !validateTimeDurations(cfg.MaxRetentionTime) || !validateTimeDurations(cfg.MaxTimeInMem) {
 		log.Fatal("Invalid time duration set")
 	}
@@ -37,14 +38,14 @@ func main() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 
-	go func() {
-		select {
-		case <-ch:
-			cancel()
-		}
-	}()
+	serv := ingestion.NewLogIngestorServer(cfg)
+	go ingestion.StartServer(ctx, serv)
+	go rest.StartServer(serv)
 
-	ingestion.StartServer(ctx, cfg)
+	select {
+	case <-ch:
+		cancel()
+	}
 }
 
 func validateTimeDurations(dur string) bool {

@@ -10,7 +10,7 @@ type IngestionFactory struct {
 	DataDir          string
 	MaxRetentionTime string
 	MaxTimeInMem     string
-	LockDataDir      bool
+	UnLockDataDir    bool
 }
 
 func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *IngestionFactory {

@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,23 +35,23 @@ type LogFilter struct {
 	Keyword      string
 }
 
-func NewLogIngestorServer(logDir string, maxTimeMem string, lockDataDir bool) *LogIngestorServer {
+func NewLogIngestorServer(factory *pkg.IngestionFactory) *LogIngestorServer {
 	server := &LogIngestorServer{
-		logDir:   logDir,
+		logDir:   factory.DataDir,
 		shutdown: make(chan struct{}),
 	}
-	badgerOpts := badger.DefaultOptions(filepath.Join(logDir, "index")).WithBypassLockGuard(lockDataDir)
+	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir)
 	badgerOpts.Logger = nil
 	db, err := badger.Open(badgerOpts)
 	if err != nil {
 		log.Fatalf("Failed to open db %v", err)
 	}
 	server.db = db
-	go server.periodicFlush(pkg.GetTimeDuration(maxTimeMem))
+	go server.periodicFlush(pkg.GetTimeDuration(factory.MaxTimeInMem))
 	return server
 }
 
-func StartServer(ctx context.Context, factory *pkg.IngestionFactory) {
+func StartServer(ctx context.Context, serv *LogIngestorServer) {
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("failed to listen on port 50051: %v", err)
@@ -60,8 +59,7 @@ func StartServer(ctx context.Context, factory *pkg.IngestionFactory) {
 	defer lis.Close()
 
 	s := grpc.NewServer()
-	server := NewLogIngestorServer(factory.DataDir, factory.MaxTimeInMem, factory.LockDataDir)
-	logapi.RegisterLogIngestorServer(s, server)
+	logapi.RegisterLogIngestorServer(s, serv)
 
 	// Run server in goroutine
 	go func() {
@@ -76,9 +74,9 @@ func StartServer(ctx context.Context, factory *pkg.IngestionFactory) {
 	case <-ctx.Done():
 		log.Println("Context cancelled. Shutting down...")
 		s.GracefulStop()
-		server.shutdown <- struct{}{}
+		serv.shutdown <- struct{}{}
 		time.Sleep(2 * time.Second) // looks safe
-		server.db.Close()
+		serv.db.Close()
 		log.Println("Server exited")
 		time.Sleep(1 * time.Second)
 	}
@@ -141,7 +139,6 @@ func (s *LogIngestorServer) QueryLogs(filter LogFilter) ([]*logapi.LogEntry, err
 			key := string(item.Key())
 			tokens := strings.Split(key, "|")
 
-			t, _ := strconv.ParseInt(tokens[0], 10, 64)
 			level := tokens[1]
 			service := tokens[2]
 			msg := tokens[3]
@@ -155,9 +152,7 @@ func (s *LogIngestorServer) QueryLogs(filter LogFilter) ([]*logapi.LogEntry, err
 			if filter.Keyword != "" && !strings.Contains(msg, filter.Keyword) {
 				continue
 			}
-			if time.Unix(t, 0).Before(filter.MinTimestamp) || time.Unix(t, 0).After(filter.MaxTimestamp) {
-				continue
-			}
+			// TODO: Support Range queries
 
 			err := item.Value(func(val []byte) error {
 				var entry logapi.LogEntry
