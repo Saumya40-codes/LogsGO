@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"unicode"
 
@@ -38,14 +39,22 @@ func main() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 
+	wg := &sync.WaitGroup{}
+
 	serv := ingestion.NewLogIngestorServer(cfg)
-	go ingestion.StartServer(ctx, serv)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ingestion.StartServer(ctx, serv)
+	}()
 	go rest.StartServer(serv)
 
 	select {
 	case <-ch:
 		cancel()
 	}
+	wg.Wait()
 }
 
 func validateTimeDurations(dur string) bool {
