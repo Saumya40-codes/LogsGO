@@ -1,0 +1,32 @@
+.navbar{
+    width: 100%;
+    height: 100px;
+}
+
+.navbar__container {
+    margin: 20px;
+    display: flex;
+    align-items: center;
+    justify-content:flex-start;
+    gap:20px;
+}
+
+.navbar__logoImage {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.navbar__logo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.navbar__logoText {
+    font-size: 14px;
+    font-weight: bold;
+    color:#a52a2a
+}
