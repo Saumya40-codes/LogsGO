@@ -46,14 +46,15 @@ func TestGRPCConn(t *testing.T) {
 
 func TestLogsFlushedToDisk(t *testing.T) {
 	factory := pkg.IngestionFactory{
-		DataDir:       t.TempDir(),
-		MaxTimeInMem:  "10s", // no need to keep it realistic, but a sensible value should be enough, eh !?
-		UnLockDataDir: true,
+		DataDir:        t.TempDir(),
+		MaxTimeInMem:   "10s", // no need to keep it realistic, but a sensible value should be enough, eh !?
+		UnLockDataDir:  true,
+		HttpListenAddr: ":8080",
 	}
 	ctx := context.Background()
 	serv := ingestion.NewLogIngestorServer(&factory)
 	go ingestion.StartServer(ctx, serv)
-	go rest.StartServer(serv)
+	go rest.StartServer(serv, &factory)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
