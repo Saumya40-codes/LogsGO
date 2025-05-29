@@ -13,6 +13,7 @@ import (
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/grpc"
 )
@@ -24,6 +25,7 @@ type LogIngestorServer struct {
 	logs     []*logapi.LogEntry
 	logDir   string
 	db       *badger.DB
+	store    store.Store
 	shutdown chan struct{}
 }
 
