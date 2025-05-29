@@ -11,6 +11,7 @@ type IngestionFactory struct {
 	MaxRetentionTime string
 	MaxTimeInMem     string
 	UnLockDataDir    bool
+	HttpListenAddr   string
 }
 
 func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *IngestionFactory {

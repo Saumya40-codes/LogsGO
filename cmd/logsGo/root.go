@@ -15,46 +15,53 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var cfg = &pkg.IngestionFactory{}
+
 var rootCmd = &cobra.Command{
 	Use:   "logsgo",
 	Short: "Start the standalone LogsGo ingestion service",
-	Run:   func(cmd *cobra.Command, args []string) {},
+	Run: func(cmd *cobra.Command, args []string) {
+		if !validateTimeDurations(cfg.MaxRetentionTime) || !validateTimeDurations(cfg.MaxTimeInMem) {
+			log.Fatal("Invalid time duration set")
+		}
+
+		log.Println("Starting LogsGo ingestion service...")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+
+		wg := &sync.WaitGroup{}
+		serv := ingestion.NewLogIngestorServer(cfg)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ingestion.StartServer(ctx, serv)
+		}()
+
+		go rest.StartServer(serv, cfg)
+
+		<-ch
+		cancel()
+		wg.Wait()
+		log.Println("LogsGo shut down cleanly")
+	},
 }
 
 func main() {
-	cfg := &pkg.IngestionFactory{}
 	rootCmd.Flags().StringVar(&cfg.DataDir, "data-dir", "data", "Data directory path to store logs data. Default value is ./data")
-	rootCmd.Flags().StringVar(&cfg.MaxRetentionTime, "max-retention-time", "10d", "Maximum time chunks blocks will remain in disk, default is 10d. \nSuffix the number with d->days m->months h->hours s->seconds")
-	rootCmd.Flags().StringVar(&cfg.MaxTimeInMem, "max-time-in-mem", "1h", "Maximum time logs are in main memory, after which gets persisted to disk, default is 1h")
-	rootCmd.Flags().BoolVar(&cfg.UnLockDataDir, "unlock-data-dir", false, "Use if you want to keep data directory unlocked for other process to perform operation on it. \n [WARNING] Recommended not to.")
-	if !validateTimeDurations(cfg.MaxRetentionTime) || !validateTimeDurations(cfg.MaxTimeInMem) {
-		log.Fatal("Invalid time duration set")
-	}
+	rootCmd.Flags().StringVar(&cfg.MaxRetentionTime, "max-retention-time", "10d", "Maximum time chunk blocks remain on disk. Suffix with d/m/h/s")
+	rootCmd.Flags().StringVar(&cfg.MaxTimeInMem, "max-time-in-mem", "1h", "Time logs remain in memory before persisting to disk. Suffix with d/m/h/s")
+	rootCmd.Flags().BoolVar(&cfg.UnLockDataDir, "unlock-data-dir", false, "Allow other processes to access data directory (not recommended)")
+	rootCmd.Flags().StringVar(&cfg.HttpListenAddr, "http-listen-addr", ":8080", "HTTP server listen address for REST API")
+	rootCmd.Flags().SortFlags = false
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
-
-	wg := &sync.WaitGroup{}
-
-	serv := ingestion.NewLogIngestorServer(cfg)
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ingestion.StartServer(ctx, serv)
-	}()
-	go rest.StartServer(serv)
-
-	select {
-	case <-ch:
-		cancel()
-	}
-	wg.Wait()
 }
 
 func validateTimeDurations(dur string) bool {
