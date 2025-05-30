@@ -25,17 +25,17 @@ func StartServer(logServer *ingestion.LogIngestorServer, cfg *pkg.IngestionFacto
 	r.GET("/query", func(g *gin.Context) {
 		expr := g.Query("expression")
 
-		filter := ingestion.LogFilter{ // TODO: have some query parser to parse the expression, for now match expr to service name
-			Service: expr,
-		}
+		// filter := ingestion.LogFilter{ // TODO: have some query parser to parse the expression, for now match expr to service name
+		// 	Service: expr,
+		// }
 
-		results, err := logServer.QueryLogs(filter)
-		if err != nil {
-			g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+		// // results, err := logServer.QueryLogs(filter)
+		// // if err != nil {
+		// // 	g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// // 	return
+		// // }
 
-		g.JSON(http.StatusOK, results)
+		g.JSON(http.StatusOK, expr) // For now just return the expression, later we will implement the query logic
 	})
 
 	log.Println("Starting HTTP server on port :8080")

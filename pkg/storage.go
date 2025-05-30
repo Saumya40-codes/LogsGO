@@ -1,7 +1,7 @@
 package pkg
 
 import (
-	"log"
+	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -10,13 +10,12 @@ type DB struct {
 	conn *badger.DB
 }
 
-func OpenDB(path string, byPassLock bool) *DB {
-	opts := badger.DefaultOptions(path).WithLogger(nil).WithBypassLockGuard(byPassLock) // just for demo, else there should be a lock!
+func OpenDB(opts badger.Options) (*DB, error) {
 	db, err := badger.Open(opts)
 	if err != nil {
-		log.Fatal("Failed to open BadgerDB:", err)
+		return nil, fmt.Errorf("failed to open badgerDB at %s: %w", opts.Dir, err)
 	}
-	return &DB{conn: db}
+	return &DB{conn: db}, nil
 }
 
 func (db *DB) CloseDB() {

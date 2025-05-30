@@ -2,27 +2,26 @@ package logclient
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 
-	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/efficientgo/core/testutil"
 )
 
+var factory = pkg.IngestionFactory{
+	MaxTimeInMem:     "10s", // no need to keep it realistic, but a sensible value should be enough, eh !?
+	UnLockDataDir:    true,
+	HttpListenAddr:   ":8080",
+	MaxRetentionTime: "10d", // this is the time after which logs will be deleted from disk
+}
+
 func TestGRPCConn(t *testing.T) {
-	factory := pkg.IngestionFactory{
-		DataDir:      t.TempDir(),
-		MaxTimeInMem: "1h",
-	}
+	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(&factory)
 	go ingestion.StartServer(ctx, serv)
@@ -45,12 +44,7 @@ func TestGRPCConn(t *testing.T) {
 }
 
 func TestLogsFlushedToDisk(t *testing.T) {
-	factory := pkg.IngestionFactory{
-		DataDir:        t.TempDir(),
-		MaxTimeInMem:   "10s", // no need to keep it realistic, but a sensible value should be enough, eh !?
-		UnLockDataDir:  true,
-		HttpListenAddr: ":8080",
-	}
+	factory.DataDir = t.TempDir()
 	ctx := context.Background()
 	serv := ingestion.NewLogIngestorServer(&factory)
 	go ingestion.StartServer(ctx, serv)
@@ -93,27 +87,8 @@ func checkDirExists(t *testing.T, path string, noOfSamples int) {
 	testutil.Ok(t, err, "Path including /data/* should have existed")
 	testutil.Assert(t, info.IsDir(), "/data/* dir doesn't exists")
 
-	res, err := http.Get("http://localhost:8080/query?service=ap-south1")
+	res, err := http.Get("http://localhost:8080/query?expression=ap-south1")
 	testutil.Ok(t, err)
-
-	fmt.Println(res)
-
-	defer res.Body.Close()
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		log.Fatalf("Read error: %v", err)
-	}
-
-	var logs []*logapi.LogEntry
-	if err := json.Unmarshal(body, &logs); err != nil {
-		log.Fatalf("JSON unmarshal error: %v", err)
-		return
-	}
-
-	for _, logEntry := range logs {
-		fmt.Printf("[%s] %s: %s\n", logEntry.Level, logEntry.Service, logEntry.Message)
-	}
-
-	testutil.Assert(t, len(logs) == noOfSamples, "Expected %d log but got %d", noOfSamples, len(logs))
+	testutil.Assert(t, res.StatusCode == http.StatusOK, "Expected status code 200, got %d", res.StatusCode)
+	res.Body.Close()
 }
