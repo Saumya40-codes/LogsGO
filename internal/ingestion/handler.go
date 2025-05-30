@@ -2,12 +2,9 @@ package ingestion
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,10 +19,7 @@ type LogIngestorServer struct {
 	logapi.UnimplementedLogIngestorServer
 
 	mu       sync.Mutex
-	logs     []*logapi.LogEntry
-	logDir   string
-	db       *badger.DB
-	store    store.Store
+	store    store.Store // This is more of a linked list, this store is head which points to the next store, for now head is memory store
 	shutdown chan struct{}
 }
 
@@ -39,17 +33,22 @@ type LogFilter struct {
 
 func NewLogIngestorServer(factory *pkg.IngestionFactory) *LogIngestorServer {
 	server := &LogIngestorServer{
-		logDir:   factory.DataDir,
 		shutdown: make(chan struct{}),
 	}
 	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir)
 	badgerOpts.Logger = nil
-	db, err := badger.Open(badgerOpts)
+
+	// disk store
+	localStore, err := store.NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime)
 	if err != nil {
-		log.Fatalf("Failed to open db %v", err)
+		log.Fatalf("failed to create local store: %v", err) // We can fatal out as creating the newlogingestoreserver is one of the first things we do
 	}
-	server.db = db
-	go server.periodicFlush(pkg.GetTimeDuration(factory.MaxTimeInMem))
+	var nextStore store.Store = localStore
+
+	// memory store
+	memStore := store.NewMemoryStore(&nextStore, factory.MaxTimeInMem) // internally creates a goroutine to flush logs periodically
+	var headStore store.Store = memStore
+	server.store = headStore
 	return server
 }
 
@@ -72,103 +71,67 @@ func StartServer(ctx context.Context, serv *LogIngestorServer) {
 	}()
 
 	// Wait for cancellation or signal
-	select {
-	case <-ctx.Done():
-		log.Println("Context cancelled. Shutting down...")
-		s.GracefulStop()
-		serv.shutdown <- struct{}{}
-		time.Sleep(2 * time.Second) // looks safe
-		serv.db.Close()
-		log.Println("Server exited")
-		time.Sleep(1 * time.Second)
-	}
+	<-ctx.Done()
+	log.Println("Context cancelled. Shutting down...")
+	s.GracefulStop()
+	serv.shutdown <- struct{}{}
+	time.Sleep(2 * time.Second) // looks safe
+	serv.store.Close()
+	log.Println("Server exited")
+	time.Sleep(1 * time.Second)
 }
 
 func (s *LogIngestorServer) UploadLog(ctx context.Context, req *logapi.LogEntry) (*logapi.UploadResponse, error) {
 	s.mu.Lock()
-	s.logs = append(s.logs, req)
+	if req == nil {
+		return nil, nil // Not a best way to handle this, but we will do it for now
+	}
+	s.store.Insert([]*logapi.LogEntry{req})
 	s.mu.Unlock()
 	return &logapi.UploadResponse{Success: true}, nil
 }
 
-func (s *LogIngestorServer) periodicFlush(interval time.Duration) {
-	for {
-		select {
-		case <-time.After(interval):
-			s.flushToDisk()
-		case <-s.shutdown:
-			s.flushToDisk()
-			return
-		}
-	}
-}
+// This is WIP, we will implement the query logic later
+// func (s *LogIngestorServer) QueryLogs(filter LogFilter) ([]*logapi.LogEntry, error) {
+// 	var result []*logapi.LogEntry
 
-func (s *LogIngestorServer) flushToDisk() {
-	s.mu.Lock()
-	logsToFlush := s.logs
-	s.logs = nil
-	s.mu.Unlock()
+// 	err := s.db.View(func(txn *badger.Txn) error {
+// 		it := txn.NewIterator(badger.DefaultIteratorOptions)
+// 		defer it.Close()
 
-	if len(logsToFlush) == 0 {
-		return
-	}
+// 		for it.Rewind(); it.Valid(); it.Next() {
+// 			item := it.Item()
+// 			key := string(item.Key())
+// 			tokens := strings.Split(key, "|")
 
-	for _, entry := range logsToFlush {
-		key := fmt.Sprintf("%d|%s|%s|%s", entry.Timestamp, entry.Level, entry.Service, entry.Message)
+// 			level := tokens[1]
+// 			service := tokens[2]
+// 			msg := tokens[3]
 
-		val, _ := json.Marshal(entry)
-		err := s.db.Update(func(txn *badger.Txn) error {
-			return txn.Set([]byte(key), val)
-		})
-		if err != nil {
-			log.Printf("Failed to write to Badger: %v", err)
-		}
-	}
+// 			if filter.Level != "" && filter.Level != level {
+// 				continue
+// 			}
+// 			if filter.Service != "" && filter.Service != service {
+// 				continue
+// 			}
+// 			if filter.Keyword != "" && !strings.Contains(msg, filter.Keyword) {
+// 				continue
+// 			}
+// 			// TODO: Support Range queries
 
-	log.Printf("Flushed %d logs to db", len(logsToFlush))
-	s.logs = s.logs[:0]
-}
+// 			err := item.Value(func(val []byte) error {
+// 				var entry logapi.LogEntry
+// 				if err := json.Unmarshal(val, &entry); err == nil {
+// 					result = append(result, &entry)
+// 				}
+// 				return nil
+// 			})
+// 			if err != nil {
+// 				log.Printf("Value error: %v", err)
+// 			}
+// 		}
+// 		return nil
+// 	})
 
-func (s *LogIngestorServer) QueryLogs(filter LogFilter) ([]*logapi.LogEntry, error) {
-	var result []*logapi.LogEntry
-
-	err := s.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			key := string(item.Key())
-			tokens := strings.Split(key, "|")
-
-			level := tokens[1]
-			service := tokens[2]
-			msg := tokens[3]
-
-			if filter.Level != "" && filter.Level != level {
-				continue
-			}
-			if filter.Service != "" && filter.Service != service {
-				continue
-			}
-			if filter.Keyword != "" && !strings.Contains(msg, filter.Keyword) {
-				continue
-			}
-			// TODO: Support Range queries
-
-			err := item.Value(func(val []byte) error {
-				var entry logapi.LogEntry
-				if err := json.Unmarshal(val, &entry); err == nil {
-					result = append(result, &entry)
-				}
-				return nil
-			})
-			if err != nil {
-				log.Printf("Value error: %v", err)
-			}
-		}
-		return nil
-	})
-
-	return result, err
-}
+// 	return result, err
+// }

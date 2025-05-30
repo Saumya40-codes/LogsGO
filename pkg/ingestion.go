@@ -25,7 +25,7 @@ func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *
 func GetTimeDuration(dur string) time.Duration {
 	timeDur, err := strconv.Atoi(dur[:(len(dur) - 1)])
 	if err != nil {
-		log.Fatal(err) // probably this shouldn't happend as cmd/root does checks before hand
+		log.Fatal("Faced error in duration conversion") // probably this shouldn't happend as cmd/root does checks before hand, helper for testing
 	}
 	timeDurint64 := time.Duration(timeDur)
 	switch dur[(len(dur) - 1)] {

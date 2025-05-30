@@ -57,7 +57,7 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.MaxTimeInMem, "max-time-in-mem", "1h", "Time logs remain in memory before persisting to disk. Suffix with d/m/h/s")
 	rootCmd.Flags().BoolVar(&cfg.UnLockDataDir, "unlock-data-dir", false, "Allow other processes to access data directory (not recommended)")
 	rootCmd.Flags().StringVar(&cfg.HttpListenAddr, "http-listen-addr", ":8080", "HTTP server listen address for REST API")
-	rootCmd.Flags().SortFlags = false
+	rootCmd.Flags().SortFlags = true
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)
