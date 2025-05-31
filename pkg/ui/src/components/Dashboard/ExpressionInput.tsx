@@ -1,9 +1,18 @@
 import { Autocomplete } from "@mantine/core";
 import styles from "./expressionInput.module.css";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const ExpressionInput = () => {
     const [expression, setExpression] = useState("");
+    const [data, setData] = useState<string[]>([
+        "service",
+        "level",
+    ])
+
+    const labelDescriptionMap: Record<string, string> = {
+        "service": "an expression to filter logs by service name",
+        "level": "an expression to filter logs by log level (e.g., error, warning, info)",
+    };
 
     const handleExpressionChange = (value: string) => {
         setExpression(value);
@@ -41,13 +50,23 @@ const ExpressionInput = () => {
             placeholder="Enter expression"
             label="Expression"
             description="Get started with: your_service_name"
-            data={[]} // TODO: Store all possible expressions in a constant and use it here on startup
+            data={data}// TODO: Store all possible expressions in a constant and use it here on startup
             maxDropdownHeight={400}
             className={styles.expressionInput}
             value={expression}
             onChange={handleExpressionChange}
             onClick={handleExpressionSubmit}
             onKeyDown={handleKeyDown}
+            renderOption={({ option }) => {
+            return (
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                <span>{option.value}</span>
+                <span style={{ fontSize: 12, color: "#00000" }}>
+                    {labelDescriptionMap[option.value] || "No description available"}
+                </span>
+                </div>
+            );
+            }}
         />
     )
 }
