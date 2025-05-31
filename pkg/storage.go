@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -39,4 +40,25 @@ func (db *DB) Load(key string) ([]byte, error) {
 		return err
 	})
 	return value, err
+}
+
+func (db *DB) Get(regex string) ([]string, error) {
+	var uniqueKeys []string
+	err := db.conn.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			key := string(item.Key())
+			if regexp.MustCompile(regex).MatchString(key) {
+				uniqueKeys = append(uniqueKeys, key)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unique keys: %w", err)
+	}
+	return uniqueKeys, nil
 }

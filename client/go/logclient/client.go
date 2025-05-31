@@ -3,6 +3,7 @@ package logclient
 import (
 	"context"
 	"log"
+	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"google.golang.org/grpc"
@@ -34,10 +35,22 @@ func (c *Client) Close() error {
 
 // UploadLog sends a log entry to the server.
 func (c *Client) UploadLog(opts *Opts) bool {
+	if opts == nil {
+		log.Println("No options provided for log upload")
+		return false
+	}
+	if opts.Message == "" || opts.Service == "" || opts.Level == "" {
+		return false
+	}
+	if opts.TimeStamp == 0 {
+		opts.TimeStamp = time.Now().Unix()
+	}
+
 	res, err := c.client.UploadLog(context.Background(), &logapi.LogEntry{
-		Service: opts.Service,
-		Level:   opts.Level,
-		Message: opts.Message,
+		Service:   opts.Service,
+		Level:     opts.Level,
+		Message:   opts.Message,
+		Timestamp: opts.TimeStamp,
 	})
 	if err != nil {
 		log.Printf("Uploading of log failed: %v", err)

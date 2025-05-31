@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
@@ -71,6 +72,47 @@ func (l *LocalStore) Close() error {
 		l.db.CloseDB()
 	}
 	return nil
+}
+
+// LabelValues returns the unique label values from the local store.
+func (l *LocalStore) LabelValues() (Labels, error) {
+	var labels Labels
+
+	uniqueLabels, err := l.db.Get(`.*`) // Get all keys, we will filter them later
+	if err != nil {
+		return Labels{}, fmt.Errorf("failed to get unique labels: %w", err)
+	}
+
+	labels, err = parseLabels(uniqueLabels)
+	if err != nil {
+		return Labels{}, fmt.Errorf("failed to parse labels: %w", err)
+	}
+	return labels, nil
+}
+
+func parseLabels(uniqueKeys []string) (Labels, error) {
+	labels := Labels{
+		Services: make([]string, 0),
+		Levels:   make([]string, 0),
+	}
+
+	for _, key := range uniqueKeys {
+		tokens := strings.Split(key, "|")
+		if len(tokens) < 3 {
+			continue // Invalid key format
+		}
+		service := tokens[2]
+		level := tokens[1]
+
+		if !Contains(labels.Services, service) {
+			labels.Services = append(labels.Services, service)
+		}
+		if !Contains(labels.Levels, level) {
+			labels.Levels = append(labels.Levels, level)
+		}
+	}
+
+	return labels, nil
 }
 
 // Insert -> key -> fmt.Sprintf("%d|%s|%s", entry.Timestamp, entry.Level, entry.Service) TODO think about how to parse message efficiently
