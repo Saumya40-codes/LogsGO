@@ -14,7 +14,7 @@ type MemoryStore struct {
 	logs            map[int64]map[string]map[string]string // TODO: maps are costly, can we employ some hashing and use slice instead?
 	mu              sync.Mutex
 	next            *Store        // Next store in the chain, if any
-	maxTimeInMemory int64         // Maximum time in memory, after which logs are flushed to the next store
+	maxTimeInMemory time.Duration // Maximum time in memory, after which logs are flushed to the next store
 	lastFlushTime   int64         // Timestamp of the last flush operation
 	shutdown        chan struct{} // Channel to signal shutdown of the store
 }
@@ -24,7 +24,7 @@ func NewMemoryStore(next *Store, maxTimeInMemory string) *MemoryStore {
 		logs:            make(map[int64]map[string]map[string]string), // map[timestamp][service][level] = message
 		mu:              sync.Mutex{},
 		next:            next,
-		maxTimeInMemory: int64(pkg.GetTimeDuration(maxTimeInMemory).Seconds()),
+		maxTimeInMemory: pkg.GetTimeDuration(maxTimeInMemory),
 		lastFlushTime:   0,
 		shutdown:        make(chan struct{}),
 	}
@@ -63,7 +63,7 @@ func (m *MemoryStore) Flush() error {
 	defer m.mu.Unlock()
 	var logsToBeFlushed []*logapi.LogEntry
 	for ts, logs := range m.logs {
-		if time.Now().Unix()-ts >= m.maxTimeInMemory { // TODO: think of some better scheduling, currently there might be case that logs just miss out by few seconds to be flushed and will be in memory for longer time
+		if time.Now().Unix()-ts >= int64(m.maxTimeInMemory.Seconds()) { // TODO: think of some better scheduling, currently there might be case that logs just miss out by few seconds to be flushed and will be in memory for longer time
 			entry := mapToLogEntrys(logs, ts)
 			logsToBeFlushed = append(logsToBeFlushed, entry...)
 			// Remove the logs that are flushed
@@ -93,13 +93,26 @@ func (m *MemoryStore) Close() error {
 	defer m.mu.Unlock()
 
 	m.logs = make(map[int64]map[string]map[string]string) // Clear the logs
+
+	// Close the next store if it exists
+	if m.next != nil {
+		if localStore, ok := (*m.next).(*LocalStore); ok {
+			if err := localStore.Close(); err != nil {
+				return fmt.Errorf("failed to close next store: %w", err)
+			}
+		} else {
+			return fmt.Errorf("next store is not a LocalStore, cannot close")
+		}
+	}
+
 	return nil
 }
 
 func (m *MemoryStore) startFlushTimer() {
 	for {
+		time.Sleep(2 * time.Second) // Sleep for 2 seconds before checking the flush condition to prevent tight loop
 		select {
-		case <-time.After(time.Duration(m.maxTimeInMemory)):
+		case <-time.After(m.maxTimeInMemory):
 			// Start Flushing, what to flush should be decided by another function
 			m.Flush()
 			m.lastFlushTime = time.Now().Unix()
@@ -124,4 +137,41 @@ func mapToLogEntrys(logs map[string]map[string]string, ts int64) []*logapi.LogEn
 		}
 	}
 	return entries
+}
+
+// LabelValues returns the unique label values from the local store. We will have chain of stores, so this will return the unique values from all the stores in the chain.
+func (m *MemoryStore) LabelValues() (Labels, error) {
+	labels := Labels{
+		Services: make([]string, 0),
+		Levels:   make([]string, 0),
+	}
+
+	services := make(map[string]struct{})
+	levels := make(map[string]struct{})
+
+	for _, logs := range m.logs {
+		for service := range logs {
+			if _, exists := services[service]; !exists {
+				services[service] = struct{}{}
+				labels.Services = append(labels.Services, service)
+			}
+			for level := range logs[service] {
+				if _, exists := levels[level]; !exists {
+					levels[level] = struct{}{}
+					labels.Levels = append(labels.Levels, level)
+				}
+			}
+		}
+	}
+
+	if localStore, ok := (*m.next).(*LocalStore); ok {
+		localLabels, err := localStore.LabelValues()
+		if err != nil {
+			return Labels{}, fmt.Errorf("failed to get label values from local store: %w", err)
+		}
+		labels.Services = append(labels.Services, localLabels.Services...)
+		labels.Levels = append(labels.Levels, localLabels.Levels...)
+	}
+
+	return labels, nil
 }

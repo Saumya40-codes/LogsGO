@@ -19,7 +19,7 @@ type LogIngestorServer struct {
 	logapi.UnimplementedLogIngestorServer
 
 	mu       sync.Mutex
-	store    store.Store // This is more of a linked list, this store is head which points to the next store, for now head is memory store
+	Store    store.Store // This is more of a linked list, this store is head which points to the next store, for now head is memory store
 	shutdown chan struct{}
 }
 
@@ -48,7 +48,7 @@ func NewLogIngestorServer(factory *pkg.IngestionFactory) *LogIngestorServer {
 	// memory store
 	memStore := store.NewMemoryStore(&nextStore, factory.MaxTimeInMem) // internally creates a goroutine to flush logs periodically
 	var headStore store.Store = memStore
-	server.store = headStore
+	server.Store = headStore
 	return server
 }
 
@@ -74,9 +74,8 @@ func StartServer(ctx context.Context, serv *LogIngestorServer) {
 	<-ctx.Done()
 	log.Println("Context cancelled. Shutting down...")
 	s.GracefulStop()
-	serv.shutdown <- struct{}{}
 	time.Sleep(2 * time.Second) // looks safe
-	serv.store.Close()
+	serv.Store.Close()
 	log.Println("Server exited")
 	time.Sleep(1 * time.Second)
 }
@@ -86,7 +85,7 @@ func (s *LogIngestorServer) UploadLog(ctx context.Context, req *logapi.LogEntry)
 	if req == nil {
 		return nil, nil // Not a best way to handle this, but we will do it for now
 	}
-	s.store.Insert([]*logapi.LogEntry{req})
+	s.Store.Insert([]*logapi.LogEntry{req})
 	s.mu.Unlock()
 	return &logapi.UploadResponse{Success: true}, nil
 }

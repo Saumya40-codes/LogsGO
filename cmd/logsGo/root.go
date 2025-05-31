@@ -36,13 +36,16 @@ var rootCmd = &cobra.Command{
 		wg := &sync.WaitGroup{}
 		serv := ingestion.NewLogIngestorServer(cfg)
 
-		wg.Add(1)
+		wg.Add(2)
 		go func() {
 			defer wg.Done()
 			ingestion.StartServer(ctx, serv)
 		}()
 
-		go rest.StartServer(serv, cfg)
+		go func() {
+			defer wg.Done()
+			rest.StartServer(ctx, serv, cfg)
+		}()
 
 		<-ch
 		cancel()

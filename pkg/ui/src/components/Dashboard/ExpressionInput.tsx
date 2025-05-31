@@ -2,6 +2,11 @@ import { Autocomplete } from "@mantine/core";
 import styles from "./expressionInput.module.css";
 import { useEffect, useState } from "react";
 
+interface LabelValuesProps {
+    services: string[];
+    levels: string[];
+}
+
 const ExpressionInput = () => {
     const [expression, setExpression] = useState("");
     const [data, setData] = useState<string[]>([
@@ -44,6 +49,38 @@ const ExpressionInput = () => {
             handleExpressionSubmit();
         }
     }
+
+    useEffect(() => {
+        // Fetch available services and levels name from the backend
+        const fetchLabelValues = async () => {
+            try {
+                const response = await fetch("http://localhost:8080/labels");
+                if (!response.ok) {
+                    throw new Error("Failed to fetch label values");
+                }
+                const data:LabelValuesProps = await response.json();
+
+                setData([
+                    "service",
+                    "level",
+                    ...data.services,
+                    ...data.levels,
+                ]);  // we don't want to use previous values as it might contain duplicates
+
+                data.services.forEach((service: string) => {
+                    labelDescriptionMap[service] = `Filter logs by service: ${service}`;
+                });
+                data.levels.forEach((level: string) => {
+                    labelDescriptionMap[level] = `Filter logs by log level: ${level}`;
+                });
+
+            } catch (error) {
+                console.error("Error fetching label values:", error);
+            }
+        };
+
+        fetchLabelValues();
+    }, []);
 
     return (
         <Autocomplete
