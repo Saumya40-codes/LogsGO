@@ -7,3 +7,6 @@ proto:
 
 build:
 	go build -o logsGo ./cmd/logsGo
+
+tests:
+	go test -v ./...

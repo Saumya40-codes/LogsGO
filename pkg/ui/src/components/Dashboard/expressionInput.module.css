@@ -1,4 +1,19 @@
-.expressionInput {
-
+.container {
+  position: relative;
   width: 100%;
+  padding: 0;
+  margin: 0;
+}
+
+.expressionInput{
+  width: 100%;
+}
+
+.suggestionItem{
+  width: 80%;
+}
+
+.title {
+  font-size: 1.2rem;
+  font-weight: 500;
 }
