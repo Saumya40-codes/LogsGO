@@ -1,0 +1,32 @@
+name: Summarize new PRs
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  summarize-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run AI inference
+        id: inference
+        uses: actions/ai-inference@v1
+        with:
+          prompt: |
+            Summarize the following GitHub Pull Request in one paragraph:
+            Title: ${{ github.event.pull_request.title }}
+            Body: ${{ github.event.pull_request.body }}
+
+      - name: Comment with AI summary
+        run: |
+          gh pr comment $PR_NUMBER --body '${{ steps.inference.outputs.response }}'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
