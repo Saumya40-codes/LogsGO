@@ -46,7 +46,7 @@ func NewLogIngestorServer(factory *pkg.IngestionFactory) *LogIngestorServer {
 	var nextStore store.Store = localStore
 
 	// memory store
-	memStore := store.NewMemoryStore(&nextStore, factory.MaxTimeInMem) // internally creates a goroutine to flush logs periodically
+	memStore := store.NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.FlushOnExit) // internally creates a goroutine to flush logs periodically
 	var headStore store.Store = memStore
 	server.Store = headStore
 	return server

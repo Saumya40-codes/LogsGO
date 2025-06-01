@@ -17,9 +17,10 @@ type MemoryStore struct {
 	maxTimeInMemory time.Duration // Maximum time in memory, after which logs are flushed to the next store
 	lastFlushTime   int64         // Timestamp of the last flush operation
 	shutdown        chan struct{} // Channel to signal shutdown of the store
+	flushOnExit     bool
 }
 
-func NewMemoryStore(next *Store, maxTimeInMemory string) *MemoryStore {
+func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool) *MemoryStore {
 	mstore := &MemoryStore{
 		logs:            make(map[int64]map[string]map[string]string), // map[timestamp][service][level] = message
 		mu:              sync.Mutex{},
@@ -27,6 +28,7 @@ func NewMemoryStore(next *Store, maxTimeInMemory string) *MemoryStore {
 		maxTimeInMemory: pkg.GetTimeDuration(maxTimeInMemory),
 		lastFlushTime:   0,
 		shutdown:        make(chan struct{}),
+		flushOnExit:     flushOnExit,
 	}
 
 	go mstore.startFlushTimer()
@@ -117,7 +119,9 @@ func (m *MemoryStore) startFlushTimer() {
 			m.Flush()
 			m.lastFlushTime = time.Now().Unix()
 		case <-m.shutdown:
-			m.Flush() // TODO: Is this correect? Should we flush all logs before closing?
+			if m.flushOnExit {
+				m.Flush()
+			}
 			m.Close()
 			return
 		}
