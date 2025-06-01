@@ -10,7 +10,7 @@ import (
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
-	"github.com/Saumya40-codes/LogsGO/pkg/logql"
+	"github.com/Saumya40-codes/LogsGO/pkg/logsql"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/grpc"
@@ -95,7 +95,7 @@ func (s *LogIngestorServer) MakeQuery(query string) ([]*logapi.LogEntry, error) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	parse, err := logql.ParseQuery(query)
+	parse, err := logsql.ParseQuery(query)
 	if err != nil {
 		log.Printf("failed to parse query: %v", err)
 		return nil, err

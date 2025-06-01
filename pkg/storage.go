@@ -42,7 +42,7 @@ func (db *DB) Load(key string) ([]byte, error) {
 	return value, err
 }
 
-func (db *DB) Get(regex string) ([]string, error) {
+func (db *DB) GetKey(regex string) ([]string, error) {
 	var uniqueKeys []string
 	err := db.conn.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -61,4 +61,31 @@ func (db *DB) Get(regex string) ([]string, error) {
 		return nil, fmt.Errorf("failed to get unique keys: %w", err)
 	}
 	return uniqueKeys, nil
+}
+
+func (db *DB) Get(regex string) ([]string, []string, error) {
+	var keys []string
+	var values []string
+	err := db.conn.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			key := string(item.Key())
+			if regexp.MustCompile(regex).MatchString(key) {
+				keys = append(keys, key)
+				value, err := item.ValueCopy(nil)
+				if err != nil {
+					return fmt.Errorf("failed to get value for key %s: %w", key, err)
+				}
+				values = append(values, string(value))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get unique keys: %w", err)
+	}
+	return keys, values, nil
 }
