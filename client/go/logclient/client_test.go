@@ -115,7 +115,7 @@ func TestLabelValues(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	// there should be persistance in memory store
 
-	resp, err := http.Get("http://localhost:8080/labels")
+	resp, err := http.Get("http://localhost:8080/api/v1/labels")
 	testutil.Ok(t, err, "Failed to get label values from REST API")
 	defer resp.Body.Close()
 
@@ -132,7 +132,7 @@ func TestLabelValues(t *testing.T) {
 
 	time.Sleep(9 * time.Second)
 	// now we should have flushed logs to disk, so we should have same labels
-	resp, err = http.Get("http://localhost:8080/labels")
+	resp, err = http.Get("http://localhost:8080/api/v1/labels")
 	testutil.Ok(t, err, "Failed to get label values from REST API after flushing")
 	defer resp.Body.Close()
 

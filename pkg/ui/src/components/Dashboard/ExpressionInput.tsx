@@ -64,8 +64,7 @@ const ExpressionInput = () => {
         setExpression(newExpression);
         setShowSuggestions(false);
         setActiveSuggestionIndex(-1);
-        
-        // Focus back to input
+
         if (inputRef.current) {
             inputRef.current.focus();
         }
@@ -80,18 +79,18 @@ const ExpressionInput = () => {
         setShowSuggestions(false);
         
         try {
-            const response = await fetch(`http://localhost:8080/query?expression=${trimmedExpression}`, {
+            const response = await fetch(`http://localhost:8080/api/v1/query?expression=${trimmedExpression}`, {
                 method: "GET",
                 headers: {
                     "Content-Type": "application/json",
                 },
             });
-            
+
             if (!response.ok) {
                 console.error("Failed to submit expression:", response.statusText);
                 return;
             }
-            
+
             const data = await response.json();
             console.log("Expression submitted successfully:", data);
         } catch (error) {
@@ -154,7 +153,7 @@ const ExpressionInput = () => {
     useEffect(() => {
         const fetchLabelValues = async () => {
             try {
-                const response = await fetch("http://localhost:8080/labels");
+                const response = await fetch("http://localhost:8080/api/v1/labels");
                 if (!response.ok) {
                     throw new Error("Failed to fetch label values");
                 }
