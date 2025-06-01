@@ -1,7 +1,6 @@
 package logclient
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -38,7 +37,7 @@ func TestGRPCConn(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(context.Background())
+	lc, err := NewLogClient(ctx)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
@@ -62,7 +61,7 @@ func TestDirCreated(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(context.Background())
+	lc, err := NewLogClient(ctx)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
@@ -90,7 +89,7 @@ func checkDirExists(t *testing.T, path string) {
 
 func TestLabelValues(t *testing.T) {
 	factory.DataDir = t.TempDir()
-	ctx := context.Background()
+	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(&factory)
 	go ingestion.StartServer(ctx, serv)
 	go rest.StartServer(ctx, serv, &factory)
@@ -104,7 +103,7 @@ func TestLabelValues(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(context.Background())
+	lc, err := NewLogClient(ctx)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
@@ -157,7 +156,7 @@ func AssertLabels(t *testing.T, labels store.Labels, expectedServices []string, 
 
 func TestQueryOutput(t *testing.T) {
 	factory.DataDir = t.TempDir()
-	ctx := context.Background()
+	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(&factory)
 	go ingestion.StartServer(ctx, serv)
 	go rest.StartServer(ctx, serv, &factory)
@@ -171,7 +170,7 @@ func TestQueryOutput(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(context.Background())
+	lc, err := NewLogClient(ctx)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
