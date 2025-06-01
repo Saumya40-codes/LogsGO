@@ -10,6 +10,7 @@ import (
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/logql"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/grpc"
@@ -90,47 +91,21 @@ func (s *LogIngestorServer) UploadLog(ctx context.Context, req *logapi.LogEntry)
 	return &logapi.UploadResponse{Success: true}, nil
 }
 
-// This is WIP, we will implement the query logic later
-// func (s *LogIngestorServer) QueryLogs(filter LogFilter) ([]*logapi.LogEntry, error) {
-// 	var result []*logapi.LogEntry
+func (s *LogIngestorServer) MakeQuery(query string) ([]*logapi.LogEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-// 	err := s.db.View(func(txn *badger.Txn) error {
-// 		it := txn.NewIterator(badger.DefaultIteratorOptions)
-// 		defer it.Close()
+	parse, err := logql.ParseQuery(query)
+	if err != nil {
+		log.Printf("failed to parse query: %v", err)
+		return nil, err
+	}
 
-// 		for it.Rewind(); it.Valid(); it.Next() {
-// 			item := it.Item()
-// 			key := string(item.Key())
-// 			tokens := strings.Split(key, "|")
+	logs, err := s.Store.Query(parse)
+	if err != nil {
+		log.Printf("failed to query logs: %v", err)
+		return nil, err
+	}
 
-// 			level := tokens[1]
-// 			service := tokens[2]
-// 			msg := tokens[3]
-
-// 			if filter.Level != "" && filter.Level != level {
-// 				continue
-// 			}
-// 			if filter.Service != "" && filter.Service != service {
-// 				continue
-// 			}
-// 			if filter.Keyword != "" && !strings.Contains(msg, filter.Keyword) {
-// 				continue
-// 			}
-// 			// TODO: Support Range queries
-
-// 			err := item.Value(func(val []byte) error {
-// 				var entry logapi.LogEntry
-// 				if err := json.Unmarshal(val, &entry); err == nil {
-// 					result = append(result, &entry)
-// 				}
-// 				return nil
-// 			})
-// 			if err != nil {
-// 				log.Printf("Value error: %v", err)
-// 			}
-// 		}
-// 		return nil
-// 	})
-
-// 	return result, err
-// }
+	return logs, nil
+}

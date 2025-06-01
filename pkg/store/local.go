@@ -48,8 +48,11 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry) error {
 	return nil
 }
 
-func (l *LocalStore) Query() {
-	// TODO: Implement query logic based on the filter
+func (l *LocalStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return nil, fmt.Errorf("query not implemented for LocalStore")
 }
 
 func (l *LocalStore) Flush() error {

@@ -28,9 +28,13 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 	{
 		api.GET("/query", func(g *gin.Context) {
 			expr := g.Query("expression")
-
-			// TODO: implement actual query logic later
-			g.JSON(http.StatusOK, expr)
+			res, err := logServer.MakeQuery(expr)
+			if err != nil {
+				log.Printf("Error processing query: %v", err)
+				g.JSON(http.StatusBadRequest, gin.H{"error": "Invalid query expression"})
+				return
+			}
+			g.JSON(http.StatusOK, res)
 		})
 
 		api.GET("/labels", func(g *gin.Context) {
@@ -69,4 +73,3 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 
 	log.Println("Stopping LogIngestorServer...")
 }
-
