@@ -1,13 +1,13 @@
 package logclient
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 
+	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
@@ -37,7 +37,7 @@ func TestGRPCConn(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(context.Background())
+	lc, err := NewLogClient(ctx)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
@@ -45,7 +45,7 @@ func TestGRPCConn(t *testing.T) {
 	testutil.Assert(t, ok, "logs can't be uploaded")
 }
 
-func TestLogsFlushedToDisk(t *testing.T) {
+func TestDirCreated(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(&factory)
@@ -61,21 +61,18 @@ func TestLogsFlushedToDisk(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(context.Background())
+	lc, err := NewLogClient(ctx)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
 
 	testutil.Assert(t, ok, "logs can't be uploaded")
 
-	// there shouldnt be persistance, we should have 'atleast' something in data/
-	checkDirExists(t, factory.DataDir, 0)
-	time.Sleep(9 * time.Second)
-	// there should be persistance
-	checkDirExists(t, factory.DataDir, 1)
+	// we should have 'atleast' something in data/
+	checkDirExists(t, factory.DataDir)
 }
 
-func checkDirExists(t *testing.T, path string, noOfSamples int) {
+func checkDirExists(t *testing.T, path string) {
 	info, err := os.Stat(path)
 
 	testutil.Ok(t, err, "Path including /data/* should have existed")
@@ -92,7 +89,7 @@ func checkDirExists(t *testing.T, path string, noOfSamples int) {
 
 func TestLabelValues(t *testing.T) {
 	factory.DataDir = t.TempDir()
-	ctx := context.Background()
+	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(&factory)
 	go ingestion.StartServer(ctx, serv)
 	go rest.StartServer(ctx, serv, &factory)
@@ -106,7 +103,7 @@ func TestLabelValues(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(context.Background())
+	lc, err := NewLogClient(ctx)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
@@ -154,5 +151,48 @@ func AssertLabels(t *testing.T, labels store.Labels, expectedServices []string, 
 
 	for _, level := range expectedLevels {
 		testutil.Assert(t, store.Contains(labels.Levels, level), "Expected level label %s not found", level)
+	}
+}
+
+func TestQueryOutput(t *testing.T) {
+	factory.DataDir = t.TempDir()
+	ctx := t.Context()
+	serv := ingestion.NewLogIngestorServer(&factory)
+	go ingestion.StartServer(ctx, serv)
+	go rest.StartServer(ctx, serv, &factory)
+
+	// waiting for server to start
+	time.Sleep(2 * time.Second)
+
+	opts := &Opts{
+		Message: "Time duration execeeded",
+		Level:   "warn",
+		Service: "ap-south1",
+	}
+
+	lc, err := NewLogClient(ctx)
+	testutil.Ok(t, err)
+
+	ok := lc.UploadLog(opts)
+
+	testutil.Assert(t, ok, "logs can't be uploaded")
+	time.Sleep(2 * time.Second)
+	// there should be persistance in memory store
+
+	resp, err := http.Get(`http://localhost:8080/api/v1/query?expression=level="warn"`)
+	testutil.Ok(t, err, "Failed to get query output from REST API")
+
+	defer resp.Body.Close()
+	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
+	var queryOutput []*logapi.LogEntry
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&queryOutput)
+	testutil.Ok(t, err, "Failed to decode query output from response")
+
+	testutil.Assert(t, len(queryOutput) > 0, "Expected at least one log entry in query output, got %d", len(queryOutput))
+	for _, log := range queryOutput {
+		testutil.Assert(t, log.Level == "warn", "Expected log level 'warn', got '%s'", log.Level)
+		testutil.Assert(t, log.Service == "ap-south1", "Expected log service 'ap-south1', got '%s'", log.Service)
+		testutil.Assert(t, log.Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", log.Message)
 	}
 }

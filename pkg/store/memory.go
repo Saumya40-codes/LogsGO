@@ -56,8 +56,68 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry) error {
 	return nil // No error, insertion successful
 }
 
-func (m *MemoryStore) Query() {
-	// TODO: Implement query logic based on the filter
+func (m *MemoryStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
+	if parse.LHS == nil && parse.RHS == nil {
+		// BINGO, just equate service and level
+		if len(m.logs) == 0 {
+			return nil, fmt.Errorf("no logs found")
+		}
+
+		var results []*logapi.LogEntry
+		for ts, logs := range m.logs {
+			for service, levels := range logs {
+				if parse.Service != "" && service != parse.Service {
+					continue // Skip if service does not match
+				}
+				for level, message := range levels {
+					if parse.Level != "" && level != parse.Level {
+						continue // Skip if level does not match
+					}
+					results = append(results, &logapi.LogEntry{
+						Timestamp: ts,
+						Service:   service,
+						Level:     level,
+						Message:   message,
+					})
+				}
+			}
+		}
+
+		return results, nil
+	} else if parse.Or {
+		lhsResults, err := m.Query(*parse.LHS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query LHS: %w", err)
+		}
+		rhsResults, err := m.Query(*parse.RHS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query RHS: %w", err)
+		}
+		results := append(lhsResults, rhsResults...)
+		// TODO: Remove duplicates if any
+		return results, nil
+	} else {
+		lhsResults, err := m.Query(*parse.LHS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query LHS: %w", err)
+		}
+		rhsResults, err := m.Query(*parse.RHS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query RHS: %w", err)
+		}
+		// Intersect the results
+		results := make([]*logapi.LogEntry, 0)
+		for _, lhsLog := range lhsResults {
+			for _, rhsLog := range rhsResults {
+				if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.Timestamp == rhsLog.Timestamp {
+					results = append(results, lhsLog)
+				}
+			}
+		}
+		return results, nil
+	}
+
+	// TODO: do query on m.next if it exists
 }
 
 func (m *MemoryStore) Flush() error {

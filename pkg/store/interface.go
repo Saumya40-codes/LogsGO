@@ -1,10 +1,14 @@
 package store
 
-import logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
+import (
+	"errors"
+
+	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
+)
 
 // Store interfaces defines the methods that any store implementation should provide.
 type Store interface {
-	Query()
+	Query(filter LogFilter) ([]*logapi.LogEntry, error) // Returns logs matching the filter
 	Insert(logs []*logapi.LogEntry) error
 	Flush() error
 	Close() error
@@ -19,11 +23,11 @@ type Labels struct {
 }
 
 type LogFilter struct {
-	MinTimestamp int64
-	MaxTimestamp int64
-	Level        string
-	Service      string
-	Keyword      string
+	Level   string
+	Service string
+	Or      bool
+	RHS     *LogFilter
+	LHS     *LogFilter
 }
 
 func Contains(slice []string, item string) bool {
@@ -34,3 +38,11 @@ func Contains(slice []string, item string) bool {
 	}
 	return false
 }
+
+var (
+	ErrInvalidQuery   = errors.New("invalid_query")
+	ErrNotFound       = errors.New("not_found")
+	ErrInternal       = errors.New("internal_error")
+	ErrNotImplemented = errors.New("not_implemented")
+	ErrInvalidLabel   = errors.New("invalid_label")
+)
