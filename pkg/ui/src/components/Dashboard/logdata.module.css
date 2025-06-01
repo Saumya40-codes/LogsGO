@@ -1,0 +1,5 @@
+.scrollarea {
+    overflow: auto;
+    height: 100%;
+    margin: 40px 10px;
+}

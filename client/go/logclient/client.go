@@ -10,6 +10,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+type Opts struct {
+	Service   string
+	Level     string
+	Message   string
+	TimeStamp int64
+}
+
 type Client struct {
 	conn   *grpc.ClientConn
 	client logapi.LogIngestorClient

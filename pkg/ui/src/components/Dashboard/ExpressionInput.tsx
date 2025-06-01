@@ -1,4 +1,4 @@
-import { Input, Text, Box } from "@mantine/core";
+import { Input, Text, Box, Button } from "@mantine/core";
 import styles from "./expressionInput.module.css";
 import { useEffect, useState, useRef } from "react";
 import type { LogsPayload } from "../../types/types";
@@ -101,20 +101,30 @@ const ExpressionInput = () => {
 
     return (
         <Box className={styles.container}>
-            <h1 className={styles.title}>Log Expression Input</h1>
-            <Text size="sm" c="dimmed" mb={8}>
-                Enter your log expression below. Use labels like <code>service</code> and <code>level</code> to filter logs.
-            </Text>
-            <Input
-                ref={inputRef}
-                placeholder="Enter expression"
-                about="Enter your expression here, e.g., service=web AND level=error"
-                value={expression}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                className={styles.expressionInput}
-            />
-
+            <div className={styles.inputContainer}>
+                <h1 className={styles.title}>Log Expression Input</h1>
+                <Text size="sm" c="dimmed" mb={8}>
+                    Enter your log expression below. Use labels like <code>service</code> and <code>level</code> to filter logs.
+                </Text>
+                <div className={styles.inputWrapper}>
+                    <Input
+                        ref={inputRef}
+                        placeholder="Enter expression"
+                        about="Enter your expression here, e.g., service=web AND level=error"
+                        value={expression}
+                        onChange={handleInputChange}
+                        onKeyDown={handleKeyDown}
+                        className={styles.expressionInput}
+                    />
+                    <Button
+                        onClick={handleExpressionSubmit}
+                        className={styles.submitButton}
+                        disabled={!expression.trim()}
+                    >
+                        Execute
+                    </Button>
+                </div>
+            </div>
             <div className={styles.logsContainer}>
                 <LogData logs={logs} />
             </div>
