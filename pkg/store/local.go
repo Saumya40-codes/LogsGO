@@ -61,7 +61,7 @@ func (l *LocalStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 		} else if parse.Service != "" {
 			key = fmt.Sprintf(`.*|.*|%s`, parse.Service)
 		} else {
-			return nil, fmt.Errorf("invalid query: no filter specified")
+			return nil, fmt.Errorf("invalid query: no labels provided")
 		}
 		keys, vals, err := l.db.Get(key)
 		if err != nil {
