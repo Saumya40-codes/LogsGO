@@ -57,13 +57,8 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry) error {
 }
 
 func (m *MemoryStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
+	var results []*logapi.LogEntry
 	if parse.LHS == nil && parse.RHS == nil {
-		// BINGO, just equate service and level
-		if len(m.logs) == 0 {
-			return nil, fmt.Errorf("no logs found")
-		}
-
-		var results []*logapi.LogEntry
 		for ts, logs := range m.logs {
 			for service, levels := range logs {
 				if parse.Service != "" && service != parse.Service {
@@ -83,7 +78,6 @@ func (m *MemoryStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 			}
 		}
 
-		return results, nil
 	} else if parse.Or {
 		lhsResults, err := m.Query(*parse.LHS)
 		if err != nil {
@@ -93,9 +87,7 @@ func (m *MemoryStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
-		results := append(lhsResults, rhsResults...)
-		// TODO: Remove duplicates if any
-		return results, nil
+		results = append(lhsResults, rhsResults...)
 	} else {
 		lhsResults, err := m.Query(*parse.LHS)
 		if err != nil {
@@ -105,8 +97,6 @@ func (m *MemoryStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
-		// Intersect the results
-		results := make([]*logapi.LogEntry, 0)
 		for _, lhsLog := range lhsResults {
 			for _, rhsLog := range rhsResults {
 				if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.Timestamp == rhsLog.Timestamp {
@@ -114,10 +104,21 @@ func (m *MemoryStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 				}
 			}
 		}
-		return results, nil
 	}
 
-	// TODO: do query on m.next if it exists
+	if m.next != nil {
+		if localStore, ok := (*m.next).(*LocalStore); ok {
+			result, err := localStore.Query(parse)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query next store: %w", err)
+			}
+			results = append(results, result...)
+		} else {
+			return nil, fmt.Errorf("next store is not a LocalStore, cannot query")
+		}
+	}
+
+	return results, nil
 }
 
 func (m *MemoryStore) Flush() error {

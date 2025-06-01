@@ -10,3 +10,7 @@ build:
 
 tests:
 	go test -v ./...
+	
+start-react-app:
+	cd ./pkg/ui && \
+	npm run dev
