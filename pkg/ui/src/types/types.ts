@@ -4,3 +4,8 @@ export interface LogsPayload {
     message: string;
     timestamp: string;
 }
+
+export interface LabelValuesProps {
+    Services: string[];
+    Levels: string[];
+}

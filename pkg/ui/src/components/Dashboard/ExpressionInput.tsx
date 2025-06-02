@@ -1,27 +1,14 @@
 import { Input, Text, Box, Button } from "@mantine/core";
 import styles from "./expressionInput.module.css";
-import { useEffect, useState, useRef } from "react";
+import { useState, useRef } from "react";
 import type { LogsPayload } from "../../types/types";
 import LogData from "./LogData";
-
-interface LabelValuesProps {
-    Services: string[];
-    Levels: string[];
-}
+import SuggestionFilter from "./SuggestionFilter";
 
 const ExpressionInput = () => {
     const [expression, setExpression] = useState("");
-    const [data, setData] = useState<string[]>([
-        "service",
-        "level",
-    ]);
     const inputRef = useRef<HTMLInputElement>(null);
     const [logs, setLogs] = useState<LogsPayload[]>([]);
-
-    const [labelDescriptionMap, setLabelDescriptionMap] = useState<Record<string, string>>({
-        "service": "an expression to filter logs by service name",
-        "level": "an expression to filter logs by log level (e.g., error, warning, info)",
-    });
 
     const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const value = event.target.value;
@@ -61,44 +48,6 @@ const ExpressionInput = () => {
         }
     };
 
-    useEffect(() => {
-        const fetchLabelValues = async () => {
-            try {
-                const response = await fetch("http://localhost:8080/api/v1/labels");
-                if (!response.ok) {
-                    throw new Error("Failed to fetch label values");
-                }
-                const data: LabelValuesProps = await response.json();
-                console.log("Fetched label values:", data);
-
-                setData([
-                    "service",
-                    "level",
-                    ...data.Services,
-                    ...data.Levels,
-                ]);
-
-                let newLabelDescriptionMap: Record<string, string> = {
-                    "service": "an expression to filter logs by service name",
-                    "level": "an expression to filter logs by log level (e.g., error, warning, info)",
-                };
-
-                data.Services.forEach((service: string) => {
-                    newLabelDescriptionMap[service] = `Filter logs by service: ${service}`;
-                });
-                data.Levels.forEach((level: string) => {
-                    newLabelDescriptionMap[level] = `Filter logs by log level: ${level}`;
-                });
-
-                setLabelDescriptionMap(newLabelDescriptionMap);
-            } catch (error) {
-                console.error("Error fetching label values:", error);
-            }
-        };
-
-        fetchLabelValues();
-    }, []);
-
     return (
         <Box className={styles.container}>
             <div className={styles.inputContainer}>
@@ -107,15 +56,18 @@ const ExpressionInput = () => {
                     Enter your log expression below. Use labels like <code>service</code> and <code>level</code> to filter logs.
                 </Text>
                 <div className={styles.inputWrapper}>
-                    <Input
-                        ref={inputRef}
-                        placeholder="Enter expression"
-                        about="Enter your expression here, e.g., service=web AND level=error"
-                        value={expression}
-                        onChange={handleInputChange}
-                        onKeyDown={handleKeyDown}
-                        className={styles.expressionInput}
-                    />
+                    <div className={styles.input}>
+                        <Input
+                            ref={inputRef}
+                            placeholder="Enter expression"
+                            about="Enter your expression here, e.g., service=web AND level=error"
+                            value={expression}
+                            onChange={handleInputChange}
+                            onKeyDown={handleKeyDown}
+                            className={styles.expressionInput}
+                        />
+                        <SuggestionFilter expression={expression} setExpression={setExpression} />
+                    </div>
                     <Button
                         onClick={handleExpressionSubmit}
                         className={styles.submitButton}
@@ -124,6 +76,7 @@ const ExpressionInput = () => {
                         Execute
                     </Button>
                 </div>
+
             </div>
             <div className={styles.logsContainer}>
                 <LogData logs={logs} />

@@ -1,0 +1,15 @@
+.suggestion__filter {
+    position: absolute;
+    margin-top: 38px;
+    z-index: 10;
+    background-color: var(--mantine-color-body);
+    width: 100%;
+}
+
+.suggestion__entry{
+    width: 50%;
+    display: flex;
+    justify-content: flex-start;
+    text-align: left;
+    height: 100%;
+}
