@@ -1,12 +1,12 @@
-package logsql
+package logsgoql
 
 import (
 	"fmt"
-	"reflect"
 	"testing"
 
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/efficientgo/core/testutil"
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestParseQuery(t *testing.T) {
@@ -88,6 +88,25 @@ func TestParseQuery(t *testing.T) {
 			},
 			expectError: false,
 		},
+		{
+			query: `level=info|service=auth&service=auth`,
+			expectedFilter: store.LogFilter{
+				Or: true,
+				LHS: &store.LogFilter{
+					Level: "info",
+				},
+				RHS: &store.LogFilter{
+					LHS: &store.LogFilter{
+						Service: "auth",
+					},
+					RHS: &store.LogFilter{
+						Service: "auth",
+					},
+					Or: false,
+				},
+			},
+			expectError: false,
+		},
 	}
 
 	for _, test := range tests {
@@ -97,8 +116,8 @@ func TestParseQuery(t *testing.T) {
 			fmt.Println("Expected filter:", test.expectedFilter)
 			testutil.Assert(t, err != nil == test.expectError, "expected error: %v, got: %v", test.expectError, err)
 
-			if !reflect.DeepEqual(op, test.expectedFilter) {
-				t.Errorf("expected filter: %+v, got: %+v", test.expectedFilter, op)
+			if diff := cmp.Diff(test.expectedFilter, op); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
