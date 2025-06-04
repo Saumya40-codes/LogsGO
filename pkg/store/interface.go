@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 )
@@ -30,6 +31,14 @@ type LogFilter struct {
 	LHS     *LogFilter
 }
 
+var (
+	ErrInvalidQuery   = errors.New("invalid_query")
+	ErrNotFound       = errors.New("not_found")
+	ErrInternal       = errors.New("internal_error")
+	ErrNotImplemented = errors.New("not_implemented")
+	ErrInvalidLabel   = errors.New("invalid_label")
+)
+
 func Contains(slice []string, item string) bool {
 	for _, v := range slice {
 		if v == item {
@@ -39,10 +48,30 @@ func Contains(slice []string, item string) bool {
 	return false
 }
 
-var (
-	ErrInvalidQuery   = errors.New("invalid_query")
-	ErrNotFound       = errors.New("not_found")
-	ErrInternal       = errors.New("internal_error")
-	ErrNotImplemented = errors.New("not_implemented")
-	ErrInvalidLabel   = errors.New("invalid_label")
-)
+func validateConfiguration(config BucketStoreConfig) error {
+	if strings.TrimSpace(config.Provider) == "" {
+		return errors.New("provider field in configuration is empty")
+	}
+
+	if strings.TrimSpace(config.Endpoint) == "" {
+		return errors.New("endpoint field in configuration is empty")
+	}
+
+	if strings.TrimSpace(config.Bucket) == "" {
+		return errors.New("bucket field in configuration is empty")
+	}
+
+	if strings.TrimSpace(config.Region) == "" {
+		return errors.New("region field in configuration is empty")
+	}
+
+	if strings.TrimSpace(config.AccessKey) == "" {
+		return errors.New("access_key field in configuration is empty")
+	}
+
+	if strings.TrimSpace(config.SecretKey) == "" {
+		return errors.New("secret_key field in configuration is empty")
+	}
+
+	return nil
+}

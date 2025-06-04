@@ -13,6 +13,7 @@ type IngestionFactory struct {
 	UnLockDataDir    bool
 	HttpListenAddr   string
 	FlushOnExit      bool
+	StoreConfigPath  string
 }
 
 func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *IngestionFactory {
