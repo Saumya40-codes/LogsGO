@@ -3,3 +3,5 @@ Also comes up with its own client library.
 
 ## WIP
 - Check /docs for more info
+- Current State:
+  ![image](https://github.com/user-attachments/assets/5f949a90-7a8e-4583-86da-71464978a24e)
