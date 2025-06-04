@@ -61,7 +61,7 @@ func main() {
 	rootCmd.Flags().BoolVar(&cfg.UnLockDataDir, "unlock-data-dir", false, "Allow other processes to access data directory (not recommended)")
 	rootCmd.Flags().StringVar(&cfg.HttpListenAddr, "http-listen-addr", ":8080", "HTTP server listen address for REST API")
 	rootCmd.Flags().BoolVar(&cfg.FlushOnExit, "flush-on-exit", false, "If set on exit under any condition, logs will be flushed to its next store, if you want complete persistance")
-	rootCmd.Flags().StringVar(&cfg.StoreConfigPath, "store-config-path", "", "Path to your store configuration, currently supported are: minio")
+	rootCmd.Flags().StringVar(&cfg.StoreConfigPath, "store-config-path", "", "Path to your s3 compatible store config path, if any")
 	rootCmd.Flags().SortFlags = true
 
 	if err := rootCmd.Execute(); err != nil {
