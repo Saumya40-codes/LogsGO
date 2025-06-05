@@ -14,6 +14,10 @@ message LogEntry {
   int64 timestamp = 4;
 }
 
+message LogBatch {
+  repeated LogEntry entries = 1;
+}
+
 message UploadResponse {
   bool success = 1;
 }

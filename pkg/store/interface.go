@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"strings"
+	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 )
@@ -74,4 +75,8 @@ func validateConfiguration(config BucketStoreConfig) error {
 	}
 
 	return nil
+}
+
+func getNextTimeStamp(current int64, base time.Duration) int64 {
+	return current + time.Unix(int64(base.Seconds()), 0).Unix()
 }

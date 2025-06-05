@@ -56,7 +56,7 @@ var rootCmd = &cobra.Command{
 
 func main() {
 	rootCmd.Flags().StringVar(&cfg.DataDir, "data-dir", "data", "Data directory path to store logs data. Default value is ./data")
-	rootCmd.Flags().StringVar(&cfg.MaxRetentionTime, "max-retention-time", "10d", "Maximum time chunk blocks remain on disk. Suffix with d/m/h/s")
+	rootCmd.Flags().StringVar(&cfg.MaxRetentionTime, "max-retention-time", "10d", "Maximum time blocks chunks remain on disk. Suffix with d/m/h/s")
 	rootCmd.Flags().StringVar(&cfg.MaxTimeInMem, "max-time-in-mem", "1h", "Time logs remain in memory before persisting to disk. Suffix with d/m/h/s")
 	rootCmd.Flags().BoolVar(&cfg.UnLockDataDir, "unlock-data-dir", false, "Allow other processes to access data directory (not recommended)")
 	rootCmd.Flags().StringVar(&cfg.HttpListenAddr, "http-listen-addr", ":8080", "HTTP server listen address for REST API")

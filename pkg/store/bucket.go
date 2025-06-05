@@ -1,13 +1,19 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sync"
+	"time"
 
+	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -86,6 +92,70 @@ func (b *BucketStore) InitClient() error {
 			} else {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (b *BucketStore) Insert(logs []*logapi.LogEntry) error {
+	// now here have a dedicated file kinda thing for each entry won't make sense.
+	// we will create a chunks of 2h worth of data
+
+	if len(logs) == 0 {
+		log.Println("No log to insert, skipping this cycle")
+		return nil
+	}
+
+	slices.SortFunc(logs, func(a, b *logapi.LogEntry) int {
+		if a.Timestamp < b.Timestamp {
+			return -1
+		}
+		if a.Timestamp > b.Timestamp {
+			return 1
+		}
+		return 0
+	})
+
+	baseTimeStamp := logs[0].Timestamp
+	nextTimeStamp := getNextTimeStamp(baseTimeStamp, 2*time.Hour)
+
+	batches := make(map[string][]*logapi.LogEntry)
+
+	for _, log := range logs {
+		if log.Timestamp > nextTimeStamp {
+			// our logs are sorted, so we can call it end here for one batch
+			baseTimeStamp = log.Timestamp
+			nextTimeStamp = getNextTimeStamp(baseTimeStamp, 2*time.Hour)
+		}
+
+		key := fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, log.Service)
+		batches[key] = append(batches[key], log)
+	}
+
+	for key, logs := range batches {
+		batch := &logapi.LogBatch{
+			Entries: logs,
+		}
+
+		data, err := proto.Marshal(batch)
+		if err != nil {
+			return fmt.Errorf("failed to marshal protobuf: %w", err)
+		}
+
+		reader := bytes.NewReader(data)
+		_, err = b.client.PutObject(
+			b.ctx,
+			b.config.Bucket,
+			key,
+			reader,
+			int64(len(data)),
+			minio.PutObjectOptions{
+				ContentType: "application/octet-stream",
+			},
+		)
+
+		if err != nil {
+			return fmt.Errorf("failed to upload to S3 storage: %w", err)
 		}
 	}
 	return nil
