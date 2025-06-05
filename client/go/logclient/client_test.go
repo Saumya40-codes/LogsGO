@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -239,14 +238,9 @@ func TestLogDataUploadToS3(t *testing.T) {
 	})
 	testutil.Ok(t, err)
 
-	tmpDir := t.TempDir()
-	cfgPath := filepath.Join(tmpDir, "store-config.yaml")
-	err = os.WriteFile(cfgPath, bktConfig, 0644)
-	testutil.Ok(t, err)
-
 	factory.DataDir = t.TempDir()
 	factory.MaxRetentionTime = "15s"
-	factory.StoreConfigPath = cfgPath
+	factory.StoreConfig = string(bktConfig)
 
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)

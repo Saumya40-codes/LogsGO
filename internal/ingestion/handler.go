@@ -40,10 +40,17 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	badgerOpts.Logger = nil
 
 	// s3 store, if configured
-	bucketStore, err := store.NewBucketStore(ctx, factory.StoreConfigPath)
+	var bucketStore *store.BucketStore
+	var err error
+	if factory.StoreConfigPath != "" {
+		bucketStore, err = store.NewBucketStore(ctx, factory.StoreConfigPath, "")
+	} else if factory.StoreConfig != "" {
+		bucketStore, err = store.NewBucketStore(ctx, "", factory.StoreConfig)
+	}
 	if err != nil {
 		log.Fatalf("failed to create bucket store from give configuration %v", err)
 	}
+
 	var nextStoreS3 store.Store = bucketStore
 
 	// disk store

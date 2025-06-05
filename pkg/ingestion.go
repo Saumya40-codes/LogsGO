@@ -14,6 +14,7 @@ type IngestionFactory struct {
 	HttpListenAddr   string
 	FlushOnExit      bool
 	StoreConfigPath  string
+	StoreConfig      string
 }
 
 func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *IngestionFactory {

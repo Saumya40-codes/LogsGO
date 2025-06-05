@@ -25,6 +25,10 @@ var rootCmd = &cobra.Command{
 			log.Fatal("Invalid time duration set")
 		}
 
+		if cfg.StoreConfig != "" && cfg.StoreConfigPath != "" {
+			log.Fatal("--store-config and --store-config-path flag can't be used together")
+		}
+
 		log.Println("Starting LogsGo ingestion service...")
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -62,6 +66,7 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.HttpListenAddr, "http-listen-addr", ":8080", "HTTP server listen address for REST API")
 	rootCmd.Flags().BoolVar(&cfg.FlushOnExit, "flush-on-exit", false, "If set on exit under any condition, logs will be flushed to its next store, if you want complete persistance")
 	rootCmd.Flags().StringVar(&cfg.StoreConfigPath, "store-config-path", "", "Path to your s3 compatible store config path, if any")
+	rootCmd.Flags().StringVar(&cfg.StoreConfig, "store-config", "", "s3 compatible store configuration, can't be used with --store-config-path flag")
 	rootCmd.Flags().SortFlags = true
 
 	if err := rootCmd.Execute(); err != nil {

@@ -39,15 +39,23 @@ type BucketStore struct {
 	ctx    context.Context
 }
 
-func NewBucketStore(ctx context.Context, path string) (*BucketStore, error) {
-	configData, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+func NewBucketStore(ctx context.Context, path string, storeConfig string) (*BucketStore, error) {
+	var configData []byte
+	var err error
+
+	if path != "" {
+		configData, err = os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+	} else if storeConfig != "" {
+		configData = []byte(storeConfig)
+	} else {
+		return nil, fmt.Errorf("either path or storeConfig must be provided")
 	}
 
 	var BucketCfg Config
 	err = yaml.Unmarshal(configData, &BucketCfg)
-
 	if err != nil {
 		return nil, err
 	}
