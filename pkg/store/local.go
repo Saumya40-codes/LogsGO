@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
@@ -15,22 +16,31 @@ import (
 type LocalStore struct {
 	db            *pkg.DB
 	mu            sync.Mutex
-	maxTimeInDisk int64 // Maximum time in disk, after which logs are flushed to the next store
+	maxTimeInDisk time.Duration // Maximum time in disk, after which logs are flushed to the next store
 	// lastFlushTime int64 // Timestamp of the last flush operation
-	next Store // Next store in the chain, if any
+	next          *Store // Next store in the chain, if any
+	shutdown      chan struct{}
+	flushOnExit   bool
+	lastFlushTime int64 // Timestamp of the last flush operation
 }
 
-func NewLocalStore(opts badger.Options, next Store, maxTimeInDisk string) (*LocalStore, error) {
+func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flushOnExit bool) (*LocalStore, error) {
 	db, err := pkg.OpenDB(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open local store: %w", err)
 	}
-	return &LocalStore{
+
+	lstore := &LocalStore{
 		db:            db,
 		mu:            sync.Mutex{},
 		next:          next,
-		maxTimeInDisk: int64(pkg.GetTimeDuration(maxTimeInDisk).Seconds()),
-	}, nil
+		maxTimeInDisk: pkg.GetTimeDuration(maxTimeInDisk),
+		flushOnExit:   flushOnExit,
+		lastFlushTime: 0,
+	}
+
+	go lstore.startFlushTimer()
+	return lstore, nil
 }
 
 func (l *LocalStore) Insert(logs []*logapi.LogEntry) error {
@@ -131,10 +141,45 @@ func (l *LocalStore) Flush() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// Flush logic can be implemented here if needed
-	// For now, we assume that the data is persisted immediately on Insert
+	var logs []*logapi.LogEntry
+	keys, vals, err := l.db.Get(".*")
+
+	if err != nil {
+		if err == badger.ErrKeyNotFound {
+			return fmt.Errorf("no logs found for the given filter: %w", err)
+		}
+		return fmt.Errorf("failed to query logs: %w", err)
+	}
+	for i, k := range keys {
+		tokens := strings.Split(k, "|")
+		if len(tokens) < 3 {
+			continue // Invalid key format
+		}
+		timestamp, err := strconv.Atoi(tokens[0])
+		if err != nil {
+			return fmt.Errorf("invalid timestamp in key %s: %w", k, err)
+		}
+		level := tokens[1]
+		service := tokens[2]
+		message := vals[i]
+
+		if time.Now().Unix()-int64(timestamp) >= int64(l.maxTimeInDisk.Seconds()) {
+			logs = append(logs, &logapi.LogEntry{
+				Timestamp: int64(timestamp),
+				Level:     level,
+				Service:   service,
+				Message:   string(message),
+			})
+		}
+	}
+
 	if l.next != nil {
-		return l.next.Insert(nil) // This will be a remote store, to be implemented later
+		if bucketStore, ok := (*l.next).(*BucketStore); ok {
+			err := bucketStore.Insert(logs)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -188,6 +233,24 @@ func parseLabels(uniqueKeys []string) (Labels, error) {
 	}
 
 	return labels, nil
+}
+
+func (l *LocalStore) startFlushTimer() {
+	for {
+		time.Sleep(2 * time.Second) // Sleep for 2 seconds before checking the flush condition to prevent tight loop
+		select {
+		case <-time.After(l.maxTimeInDisk):
+			// Start Flushing, what to flush should be decided by another function
+			l.Flush()
+			l.lastFlushTime = time.Now().Unix()
+		case <-l.shutdown:
+			if l.flushOnExit {
+				l.Flush()
+			}
+			l.Close()
+			return
+		}
+	}
 }
 
 // Insert -> key -> fmt.Sprintf("%d|%s|%s", entry.Timestamp, entry.Level, entry.Service) TODO think about how to parse message efficiently

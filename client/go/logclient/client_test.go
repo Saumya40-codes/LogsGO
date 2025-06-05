@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,6 +14,9 @@ import (
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/efficientgo/core/testutil"
+	"github.com/efficientgo/e2e"
+	e2edb "github.com/efficientgo/e2e/db"
+	"gopkg.in/yaml.v3"
 )
 
 var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush monitor i.e. ideally maxtimeinmem should be more than 2 seconds then its set
@@ -25,7 +29,7 @@ var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush m
 func TestGRPCConn(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(&factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory)
 	go ingestion.StartServer(ctx, serv)
 
 	// waiting for server to start
@@ -48,7 +52,7 @@ func TestGRPCConn(t *testing.T) {
 func TestDirCreated(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(&factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory)
 	go ingestion.StartServer(ctx, serv)
 	go rest.StartServer(ctx, serv, &factory)
 
@@ -90,7 +94,7 @@ func checkDirExists(t *testing.T, path string) {
 func TestLabelValues(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(&factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory)
 	go ingestion.StartServer(ctx, serv)
 	go rest.StartServer(ctx, serv, &factory)
 
@@ -157,7 +161,7 @@ func AssertLabels(t *testing.T, labels store.Labels, expectedServices []string, 
 func TestQueryOutput(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(&factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory)
 	go ingestion.StartServer(ctx, serv)
 	go rest.StartServer(ctx, serv, &factory)
 
@@ -212,4 +216,58 @@ func TestQueryOutput(t *testing.T) {
 		testutil.Assert(t, log.Service == "ap-south1", "Expected log service 'ap-south1', got '%s'", log.Service)
 		testutil.Assert(t, log.Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", log.Message)
 	}
+}
+
+func TestLogDataUploadToS3(t *testing.T) {
+	// start minio server and also docker env
+	e, err := e2e.NewDockerEnvironment("uploadS3test")
+	testutil.Ok(t, err)
+	t.Cleanup(e.Close)
+
+	m1 := e2edb.NewMinio(e, "minio-1", "default")
+	testutil.Ok(t, e2e.StartAndWaitReady(m1))
+
+	bktConfig, err := yaml.Marshal(store.Config{
+		RemoteStore: store.BucketStoreConfig{
+			Provider:            "minio",
+			Bucket:              "bkt1",
+			CreateBucketOnEmpty: true,
+			Endpoint:            m1.Endpoint("http"),
+			SecretKey:           e2edb.MinioSecretKey,
+			AccessKey:           e2edb.MinioAccessKey,
+		},
+	})
+	testutil.Ok(t, err)
+
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "store-config.yaml")
+	err = os.WriteFile(cfgPath, bktConfig, 0644)
+	testutil.Ok(t, err)
+
+	factory.DataDir = t.TempDir()
+	factory.MaxRetentionTime = "15s"
+	factory.StoreConfigPath = cfgPath
+
+	ctx := t.Context()
+	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	go ingestion.StartServer(ctx, serv)
+	go rest.StartServer(ctx, serv, &factory)
+
+	// waiting for server to start
+	time.Sleep(2 * time.Second)
+
+	opts := &Opts{
+		Message: "Time duration execeeded",
+		Level:   "warn",
+		Service: "ap-south1",
+	}
+
+	lc, err := NewLogClient(ctx)
+	testutil.Ok(t, err)
+
+	ok := lc.UploadLog(opts)
+
+	testutil.Assert(t, ok, "logs can't be uploaded")
+
+	time.Sleep(20 * time.Second) // TODO: this is time consuming but can't figure out better way, so adding t.Parallel's would do the job
 }

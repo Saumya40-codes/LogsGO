@@ -119,44 +119,82 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry) error {
 	baseTimeStamp := logs[0].Timestamp
 	nextTimeStamp := getNextTimeStamp(baseTimeStamp, 2*time.Hour)
 
-	batches := make(map[string][]*logapi.LogEntry)
+	batches := make([]*logapi.LogEntry, 0)
+	key := fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, logs[0].Service)
 
 	for _, log := range logs {
 		if log.Timestamp > nextTimeStamp {
 			// our logs are sorted, so we can call it end here for one batch
+			err := b.uploadLogsToStorage(batches, key)
+			if err != nil {
+				return err
+			}
+			batches = batches[:0]
+
 			baseTimeStamp = log.Timestamp
 			nextTimeStamp = getNextTimeStamp(baseTimeStamp, 2*time.Hour)
+
+			key = fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, log.Service)
 		}
 
-		key := fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, log.Service)
-		batches[key] = append(batches[key], log)
+		batches = append(batches, log)
 	}
 
-	for key, logs := range batches {
-		batch := &logapi.LogBatch{
-			Entries: logs,
-		}
-
-		data, err := proto.Marshal(batch)
-		if err != nil {
-			return fmt.Errorf("failed to marshal protobuf: %w", err)
-		}
-
-		reader := bytes.NewReader(data)
-		_, err = b.client.PutObject(
-			b.ctx,
-			b.config.Bucket,
-			key,
-			reader,
-			int64(len(data)),
-			minio.PutObjectOptions{
-				ContentType: "application/octet-stream",
-			},
-		)
-
-		if err != nil {
-			return fmt.Errorf("failed to upload to S3 storage: %w", err)
+	// Upload last batch if exists
+	if len(batches) > 0 {
+		if err := b.uploadLogsToStorage(batches, key); err != nil {
+			return err
 		}
 	}
+
 	return nil
+}
+
+func (b *BucketStore) uploadLogsToStorage(logs []*logapi.LogEntry, objectName string) error {
+	batch := &logapi.LogBatch{
+		Entries: logs,
+	}
+
+	data, err := proto.Marshal(batch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal protobuf: %w", err)
+	}
+
+	reader := bytes.NewReader(data)
+	_, err = b.client.PutObject(
+		b.ctx,
+		b.config.Bucket,
+		objectName,
+		reader,
+		int64(len(data)),
+		minio.PutObjectOptions{
+			ContentType: "application/octet-stream",
+		},
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upload to S3 storage: %w", err)
+	}
+
+	log.Println("Uploaded log to S3")
+	return nil
+}
+
+func (b *BucketStore) Close() error {
+	return nil
+}
+
+func (b *BucketStore) Flush() error {
+	return nil
+}
+
+// LabelValues returns the unique label values from the local store.
+func (b *BucketStore) LabelValues() (Labels, error) {
+	var labels Labels
+
+	return labels, nil
+}
+
+func (b *BucketStore) Query(filter LogFilter) ([]*logapi.LogEntry, error) {
+	return nil, nil
 }

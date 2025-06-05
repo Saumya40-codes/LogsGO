@@ -62,10 +62,6 @@ func validateConfiguration(config BucketStoreConfig) error {
 		return errors.New("bucket field in configuration is empty")
 	}
 
-	if strings.TrimSpace(config.Region) == "" {
-		return errors.New("region field in configuration is empty")
-	}
-
 	if strings.TrimSpace(config.AccessKey) == "" {
 		return errors.New("access_key field in configuration is empty")
 	}

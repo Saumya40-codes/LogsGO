@@ -32,15 +32,22 @@ type LogFilter struct {
 	Keyword      string
 }
 
-func NewLogIngestorServer(factory *pkg.IngestionFactory) *LogIngestorServer {
+func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *LogIngestorServer {
 	server := &LogIngestorServer{
 		shutdown: make(chan struct{}),
 	}
 	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir)
 	badgerOpts.Logger = nil
 
+	// s3 store, if configured
+	bucketStore, err := store.NewBucketStore(ctx, factory.StoreConfigPath)
+	if err != nil {
+		log.Fatalf("failed to create bucket store from give configuration %v", err)
+	}
+	var nextStoreS3 store.Store = bucketStore
+
 	// disk store
-	localStore, err := store.NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime)
+	localStore, err := store.NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit)
 	if err != nil {
 		log.Fatalf("failed to create local store: %v", err) // We can fatal out as creating the newlogingestoreserver is one of the first things we do
 	}

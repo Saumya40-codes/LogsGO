@@ -34,7 +34,7 @@ var rootCmd = &cobra.Command{
 		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 
 		wg := &sync.WaitGroup{}
-		serv := ingestion.NewLogIngestorServer(cfg)
+		serv := ingestion.NewLogIngestorServer(ctx, cfg)
 
 		wg.Add(2)
 		go func() {
