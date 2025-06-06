@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -178,6 +179,12 @@ func (l *LocalStore) Flush() error {
 			err := bucketStore.Insert(logs)
 			if err != nil {
 				return err
+			}
+			for _, lg := range logs {
+				err := l.db.Delete(fmt.Sprintf("%d|%s|%s", lg.Timestamp, lg.Level, lg.Service))
+				if err != nil {
+					log.Printf("failed to delete log entry %d|%s|%s: %v", lg.Timestamp, lg.Level, lg.Service, err)
+				}
 			}
 		}
 	}
