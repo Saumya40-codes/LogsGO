@@ -16,15 +16,31 @@
     - **In-memory store** → for fast ingestion and short-term access.
     - **Local store** → persistent storage powered by [BadgerDB](https://github.com/dgraph-io/badger).
     - **Cloud store** → support for S3-compatible services like AWS S3 or MinIO.
--  **Chained store design**: Each store passes query and flush operations to its `.next()` store for transparent fallbacks and deep queries.
+-  **Chained store design**: Each store passes query and flush operations to its `.next` store for transparent fallbacks and deep queries.
 -  **Custom query language**: Enables querying logs with `AND`/`OR` operators. Example:
   
     ```
     service=apsouth-1&level=warn
     ```
-- 📊 **Web dashboard**: Simple UI to query and visualize logs.
-- 📦 **Client library**: Embed the LogsGo client into your service and send logs using `UploadLogs()` over gRPC.
-- ⏱ **Configurable flush intervals** for controlling when logs are forwarded from one store to the next.
+    
+- **Web dashboard**: Simple UI to query and visualize logs.
+- **Client library**: Embed the LogsGo client into your service and send logs using `UploadLogs()` over gRPC. Example:
+  ```
+    import "github.com/Saumya40-codes/LogsGO/client/go/logclient"
+    
+    c := logclient.NewLogClient(ctx, my_logsGo_endpoint_url)
+    c.UploadLog(&logclient.Opts{
+        {
+            Service: "apsouth-1",
+            Level: "warn",
+            Message: "Disk usage high",
+            Timestamp: time.Now(),
+        },
+    })
+  ```
+
+       
+- **Configurable flush intervals** for controlling when logs are forwarded from one store to the next.
 
 ---
 
@@ -37,7 +53,7 @@
 3. At regular intervals, logs are flushed to:
  - Local store (BadgerDB)
  - Then to S3-compatible object store (e.g., AWS S3, MinIO)
-4. Queries traverse through each store using a `.next()` chain until results are found.
+4. Queries traverse through each store using a `.next` store in chain until results are found.
 
 ---
 
