@@ -23,6 +23,7 @@ var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush m
 	UnLockDataDir:    true,
 	HttpListenAddr:   ":8080",
 	MaxRetentionTime: "10d", // this is the time after which logs will be deleted from disk
+	WebListenAddr:    "*",
 }
 
 func TestGRPCConn(t *testing.T) {
