@@ -15,7 +15,7 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 	r := gin.Default()
 
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:5173"},
+		AllowOrigins:     []string{cfg.WebListenAddr},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
@@ -70,4 +70,30 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 	}
 
 	log.Println("Stopping LogIngestorServer...")
+}
+
+func StartUIServer(ctx context.Context, webListenAddr string) {
+	r := gin.Default()
+
+	r.NoRoute(func(c *gin.Context) {
+		fs := http.FileServer(http.Dir("pkg/ui/dist"))
+		fs.ServeHTTP(c.Writer, c.Request)
+	})
+
+	srv := &http.Server{
+		Addr:    webListenAddr,
+		Handler: r,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("UI server failed: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("Shutting down UI server...")
+	if err := srv.Shutdown(context.Background()); err != nil {
+		log.Printf("UI server shutdown failed: %v", err)
+	}
 }

@@ -14,3 +14,7 @@ tests:
 start-react-app:
 	cd ./pkg/ui && \
 	npm run dev
+
+build-react-app:
+	cd ./pkg/ui && \
+	npm run build

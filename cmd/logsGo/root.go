@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"unicode"
@@ -29,6 +30,10 @@ var rootCmd = &cobra.Command{
 			log.Fatal("--store-config and --store-config-path flag can't be used together")
 		}
 
+		if !strings.HasPrefix(cfg.WebListenAddr, "http://") && !strings.HasPrefix(cfg.WebListenAddr, "https://") {
+			log.Fatal("--web-listen-addr should have http or https as prefix to the main url")
+		}
+
 		log.Println("Starting LogsGo ingestion service...")
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -40,7 +45,7 @@ var rootCmd = &cobra.Command{
 		wg := &sync.WaitGroup{}
 		serv := ingestion.NewLogIngestorServer(ctx, cfg)
 
-		wg.Add(2)
+		wg.Add(3)
 		go func() {
 			defer wg.Done()
 			ingestion.StartServer(ctx, serv)
@@ -49,6 +54,13 @@ var rootCmd = &cobra.Command{
 		go func() {
 			defer wg.Done()
 			rest.StartServer(ctx, serv, cfg)
+		}()
+
+		log.Println("Starting logsGo UI")
+		addr := getAddr(cfg.WebListenAddr)
+		go func() {
+			defer wg.Done()
+			rest.StartUIServer(ctx, addr)
 		}()
 
 		<-ch
@@ -67,6 +79,7 @@ func main() {
 	rootCmd.Flags().BoolVar(&cfg.FlushOnExit, "flush-on-exit", false, "If set on exit under any condition, logs will be flushed to its next store, if you want complete persistance")
 	rootCmd.Flags().StringVar(&cfg.StoreConfigPath, "store-config-path", "", "Path to your s3 compatible store config path, if any")
 	rootCmd.Flags().StringVar(&cfg.StoreConfig, "store-config", "", "s3 compatible store configuration, can't be used with --store-config-path flag")
+	rootCmd.Flags().StringVar(&cfg.WebListenAddr, "web-listen-addr", "http://localhost:19091", "LogsGo web client address")
 	rootCmd.Flags().SortFlags = true
 
 	if err := rootCmd.Execute(); err != nil {
@@ -90,4 +103,16 @@ func validateTimeDurations(dur string) bool {
 	}
 
 	return true
+}
+
+func getAddr(httpAddr string) string {
+	if strings.HasPrefix(httpAddr, "http://") {
+		return strings.TrimPrefix(httpAddr, "http://")
+	}
+
+	if strings.HasPrefix(httpAddr, "http://") {
+		return strings.TrimPrefix(httpAddr, "https://")
+	}
+
+	return httpAddr
 }
