@@ -180,6 +180,7 @@ func (l *LocalStore) Flush() error {
 			if err != nil {
 				return err
 			}
+			fmt.Printf("%d logs have been flushed to disk\n", len(logs))
 			for _, lg := range logs {
 				err := l.db.Delete(fmt.Sprintf("%d|%s|%s", lg.Timestamp, lg.Level, lg.Service))
 				if err != nil {

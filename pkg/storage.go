@@ -43,7 +43,7 @@ func (db *DB) Load(key string) ([]byte, error) {
 }
 
 func (db *DB) Delete(key string) error {
-	err := db.conn.View(func(txn *badger.Txn) error {
+	err := db.conn.Update(func(txn *badger.Txn) error {
 		err := txn.Delete([]byte(key))
 
 		return err
