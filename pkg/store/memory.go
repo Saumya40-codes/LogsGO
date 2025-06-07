@@ -205,38 +205,22 @@ func mapToLogEntrys(logs map[string]map[string]string, ts int64) []*logapi.LogEn
 }
 
 // LabelValues returns the unique label values from the local store. We will have chain of stores, so this will return the unique values from all the stores in the chain.
-func (m *MemoryStore) LabelValues() (Labels, error) {
-	labels := Labels{
-		Services: make([]string, 0),
-		Levels:   make([]string, 0),
-	}
-
-	services := make(map[string]struct{})
-	levels := make(map[string]struct{})
-
+func (m *MemoryStore) LabelValues(labels *Labels) error {
 	for _, logs := range m.logs {
 		for service := range logs {
-			if _, exists := services[service]; !exists {
-				services[service] = struct{}{}
-				labels.Services = append(labels.Services, service)
-			}
+			labels.Services[service] = struct{}{}
 			for level := range logs[service] {
-				if _, exists := levels[level]; !exists {
-					levels[level] = struct{}{}
-					labels.Levels = append(labels.Levels, level)
-				}
+				labels.Levels[level] = struct{}{}
 			}
 		}
 	}
 
 	if localStore, ok := (*m.next).(*LocalStore); ok {
-		localLabels, err := localStore.LabelValues()
+		err := localStore.LabelValues(labels)
 		if err != nil {
-			return Labels{}, fmt.Errorf("failed to get label values from local store: %w", err)
+			return fmt.Errorf("failed to get label values from local store: %w", err)
 		}
-		labels.Services = append(labels.Services, localLabels.Services...)
-		labels.Levels = append(labels.Levels, localLabels.Levels...)
 	}
 
-	return labels, nil
+	return nil
 }

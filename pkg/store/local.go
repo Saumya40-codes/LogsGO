@@ -216,39 +216,30 @@ func (l *LocalStore) Close() error {
 }
 
 // LabelValues returns the unique label values from the local store.
-func (l *LocalStore) LabelValues() (Labels, error) {
-	var labels Labels
-
+func (l *LocalStore) LabelValues(labels *Labels) error {
 	uniqueLabels, err := l.db.GetKey(`.*`) // Get all keys, we will filter them later
 	if err != nil {
-		return Labels{}, fmt.Errorf("failed to get unique labels: %w", err)
+		return fmt.Errorf("failed to get unique labels: %w", err)
 	}
 
-	labels, err = parseLabels(uniqueLabels)
+	err = parseLabels(uniqueLabels, labels)
 	if err != nil {
-		return Labels{}, fmt.Errorf("failed to parse labels: %w", err)
+		return fmt.Errorf("failed to parse labels: %w", err)
 	}
 
 	if l.next != nil {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			nextLabels, err := bucketStore.LabelValues()
+			err := bucketStore.LabelValues(labels)
 			if err != nil {
-				return Labels{}, err
+				return err
 			}
-			labels.Services = append(labels.Services, nextLabels.Services...)
-			labels.Levels = append(labels.Levels, nextLabels.Levels...)
 		}
 	}
 
-	return labels, nil
+	return nil
 }
 
-func parseLabels(uniqueKeys []string) (Labels, error) {
-	labels := Labels{
-		Services: make([]string, 0),
-		Levels:   make([]string, 0),
-	}
-
+func parseLabels(uniqueKeys []string, labels *Labels) error {
 	for _, key := range uniqueKeys {
 		tokens := strings.Split(key, "|")
 		if len(tokens) < 3 {
@@ -257,15 +248,11 @@ func parseLabels(uniqueKeys []string) (Labels, error) {
 		service := tokens[2]
 		level := tokens[1]
 
-		if !Contains(labels.Services, service) {
-			labels.Services = append(labels.Services, service)
-		}
-		if !Contains(labels.Levels, level) {
-			labels.Levels = append(labels.Levels, level)
-		}
+		labels.Services[service] = struct{}{}
+		labels.Levels[level] = struct{}{}
 	}
 
-	return labels, nil
+	return nil
 }
 
 func (l *LocalStore) startFlushTimer() {

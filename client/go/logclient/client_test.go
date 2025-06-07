@@ -121,7 +121,7 @@ func TestLabelValues(t *testing.T) {
 	defer resp.Body.Close()
 
 	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
-	var labels store.Labels
+	var labels rest.LabelValuesResponse
 
 	decoder := json.NewDecoder(resp.Body)
 	err = decoder.Decode(&labels)
@@ -145,7 +145,7 @@ func TestLabelValues(t *testing.T) {
 	AssertLabels(t, labels, expectedServices, expectedLevels)
 }
 
-func AssertLabels(t *testing.T, labels store.Labels, expectedServices []string, expectedLevels []string) {
+func AssertLabels(t *testing.T, labels rest.LabelValuesResponse, expectedServices []string, expectedLevels []string) {
 	testutil.Assert(t, len(labels.Services) == len(expectedServices), "Expected %d service labels, got %d", len(expectedServices), len(labels.Services))
 	testutil.Assert(t, len(labels.Levels) == len(expectedLevels), "Expected %d level labels, got %d", len(expectedLevels), len(labels.Levels))
 

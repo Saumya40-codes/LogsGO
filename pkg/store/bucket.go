@@ -201,33 +201,19 @@ func (b *BucketStore) Flush() error {
 }
 
 // LabelValues returns the unique label values from the local store.
-func (b *BucketStore) LabelValues() (Labels, error) {
-	labels := Labels{
-		Services: make([]string, 0),
-		Levels:   make([]string, 0),
-	}
-
-	services := make(map[string]struct{})
-	levels := make(map[string]struct{})
-
+func (b *BucketStore) LabelValues(labels *Labels) error {
 	var logs []*logapi.LogEntry
 	err := b.fetchLogs(&logs)
 	if err != nil {
-		return labels, err
+		return err
 	}
 
 	for _, log := range logs {
-		if _, ok := services[log.Service]; !ok {
-			services[log.Service] = struct{}{}
-			labels.Services = append(labels.Services, log.Service)
-		}
-		if _, ok := services[log.Level]; !ok {
-			levels[log.Level] = struct{}{}
-			labels.Levels = append(labels.Levels, log.Level)
-		}
+		labels.Services[log.Service] = struct{}{}
+		labels.Levels[log.Level] = struct{}{}
 	}
 
-	return labels, nil
+	return nil
 }
 
 func (b *BucketStore) Query(filter LogFilter) ([]*logapi.LogEntry, error) {

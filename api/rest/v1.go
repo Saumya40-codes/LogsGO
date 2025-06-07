@@ -7,9 +7,15 @@ import (
 
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
+
+type LabelValuesResponse struct {
+	Services []string
+	Levels   []string
+}
 
 func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cfg *pkg.IngestionFactory) {
 	r := gin.Default()
@@ -36,14 +42,20 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 		})
 
 		api.GET("/labels", func(g *gin.Context) {
-			labels, err := logServer.Store.LabelValues()
+			labels := &store.Labels{
+				Services: map[string]struct{}{},
+				Levels:   map[string]struct{}{},
+			}
+			err := logServer.Store.LabelValues(labels)
+
+			respLabels := ConvertToResponse(*labels)
 			if err != nil {
 				log.Printf("Error fetching labels: %v", err)
 				g.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch labels"})
 				return
 			}
 
-			g.JSON(http.StatusOK, labels)
+			g.JSON(http.StatusOK, respLabels)
 		})
 	}
 
@@ -96,4 +108,21 @@ func StartUIServer(ctx context.Context, webListenAddr string) {
 	if err := srv.Shutdown(context.Background()); err != nil {
 		log.Printf("UI server shutdown failed: %v", err)
 	}
+}
+
+func ConvertToResponse(labels store.Labels) LabelValuesResponse {
+	resp := LabelValuesResponse{
+		Services: make([]string, 0),
+		Levels:   make([]string, 0),
+	}
+
+	for service, _ := range labels.Services {
+		resp.Services = append(resp.Services, service)
+	}
+
+	for level, _ := range labels.Levels {
+		resp.Levels = append(resp.Levels, level)
+	}
+
+	return resp
 }

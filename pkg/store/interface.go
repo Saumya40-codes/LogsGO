@@ -14,13 +14,13 @@ type Store interface {
 	Insert(logs []*logapi.LogEntry) error
 	Flush() error
 	Close() error
-	LabelValues() (Labels, error) // Returns all the unique label values for services and levels
+	LabelValues(labels *Labels) error // Returns all the unique label values for services and levels
 	// TODO: Find what else we need here
 }
 
 type Labels struct {
-	Services []string
-	Levels   []string
+	Services map[string]struct{}
+	Levels   map[string]struct{}
 	// TODO: Add keywords or other labels if needed
 }
 
