@@ -8,6 +8,7 @@ import (
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
+	"github.com/Saumya40-codes/LogsGO/pkg/ui"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -87,10 +88,7 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 func StartUIServer(ctx context.Context, webListenAddr string) {
 	r := gin.Default()
 
-	r.NoRoute(func(c *gin.Context) {
-		fs := http.FileServer(http.Dir("pkg/ui/dist"))
-		fs.ServeHTTP(c.Writer, c.Request)
-	})
+	r.NoRoute(ui.Handler())
 
 	srv := &http.Server{
 		Addr:    webListenAddr,
