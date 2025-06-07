@@ -1,0 +1,8 @@
+pkg/ui/*
+!pkg/ui/dist/
+!pkg/ui/dist/**
+!pkg/ui/static.go
+
+docs
+examples
+client
