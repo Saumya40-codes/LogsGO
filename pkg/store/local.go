@@ -135,6 +135,16 @@ func (l *LocalStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 		}
 	}
 
+	if l.next != nil {
+		if bucketStore, ok := (*l.next).(*BucketStore); ok {
+			res, err := bucketStore.Query(parse)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, res...)
+		}
+	}
+
 	return results, nil
 }
 
@@ -181,14 +191,17 @@ func (l *LocalStore) Flush() error {
 				return err
 			}
 			fmt.Printf("%d logs have been flushed to disk\n", len(logs))
-			for _, lg := range logs {
-				err := l.db.Delete(fmt.Sprintf("%d|%s|%s", lg.Timestamp, lg.Level, lg.Service))
-				if err != nil {
-					log.Printf("failed to delete log entry %d|%s|%s: %v", lg.Timestamp, lg.Level, lg.Service, err)
-				}
-			}
 		}
 	}
+
+	// no err till here, we can delete logs either no need for next store by user or logs are flushed
+	for _, lg := range logs {
+		err := l.db.Delete(fmt.Sprintf("%d|%s|%s", lg.Timestamp, lg.Level, lg.Service))
+		if err != nil {
+			log.Printf("failed to delete log entry %d|%s|%s: %v", lg.Timestamp, lg.Level, lg.Service, err)
+		}
+	}
+
 	return nil
 }
 
@@ -215,6 +228,18 @@ func (l *LocalStore) LabelValues() (Labels, error) {
 	if err != nil {
 		return Labels{}, fmt.Errorf("failed to parse labels: %w", err)
 	}
+
+	if l.next != nil {
+		if bucketStore, ok := (*l.next).(*BucketStore); ok {
+			nextLabels, err := bucketStore.LabelValues()
+			if err != nil {
+				return Labels{}, err
+			}
+			labels.Services = append(labels.Services, nextLabels.Services...)
+			labels.Levels = append(labels.Levels, nextLabels.Levels...)
+		}
+	}
+
 	return labels, nil
 }
 

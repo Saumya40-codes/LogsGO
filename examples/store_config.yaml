@@ -1,0 +1,7 @@
+remote_store:
+  provider: "minio"
+  bucket: "bkt1"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  create_bucket_on_empty: true
+  endpoint: "127.0.0.1:9000"

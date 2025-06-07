@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"slices"
@@ -69,6 +70,8 @@ func NewBucketStore(ctx context.Context, path string, storeConfig string) (*Buck
 		mu:     sync.Mutex{},
 		ctx:    ctx,
 	}
+
+	fmt.Println("new bucket store created with ctx ", store.ctx)
 
 	if err = store.InitClient(); err != nil {
 		return nil, err
@@ -189,20 +192,118 @@ func (b *BucketStore) uploadLogsToStorage(logs []*logapi.LogEntry, objectName st
 }
 
 func (b *BucketStore) Close() error {
+	// passed ctx should do the job
 	return nil
 }
 
 func (b *BucketStore) Flush() error {
-	return nil
+	return nil // nothing next to bucket store
 }
 
 // LabelValues returns the unique label values from the local store.
 func (b *BucketStore) LabelValues() (Labels, error) {
-	var labels Labels
+	labels := Labels{
+		Services: make([]string, 0),
+		Levels:   make([]string, 0),
+	}
+
+	services := make(map[string]struct{})
+	levels := make(map[string]struct{})
+
+	var logs []*logapi.LogEntry
+	err := b.fetchLogs(&logs)
+	if err != nil {
+		return labels, err
+	}
+
+	for _, log := range logs {
+		if _, ok := services[log.Service]; !ok {
+			services[log.Service] = struct{}{}
+			labels.Services = append(labels.Services, log.Service)
+		}
+		if _, ok := services[log.Level]; !ok {
+			levels[log.Level] = struct{}{}
+			labels.Levels = append(labels.Levels, log.Level)
+		}
+	}
 
 	return labels, nil
 }
 
 func (b *BucketStore) Query(filter LogFilter) ([]*logapi.LogEntry, error) {
-	return nil, nil
+	var logs []*logapi.LogEntry
+	b.fetchLogs(&logs)
+	var result []*logapi.LogEntry
+
+	if filter.LHS == nil && filter.RHS == nil {
+		for _, log := range logs {
+			if log.Level == filter.Level || log.Service == filter.Service {
+				result = append(result, log)
+			}
+		}
+	} else {
+		if filter.Or {
+			lhsResults, err := b.Query(*filter.LHS)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query LHS: %w", err)
+			}
+			rhsResults, err := b.Query(*filter.RHS)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query RHS: %w", err)
+			}
+			result = append(lhsResults, rhsResults...)
+		} else {
+			lhsResults, err := b.Query(*filter.LHS)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query LHS: %w", err)
+			}
+			rhsResults, err := b.Query(*filter.RHS)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query RHS: %w", err)
+			}
+			for _, lhsLog := range lhsResults {
+				for _, rhsLog := range rhsResults {
+					if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.Timestamp == rhsLog.Timestamp {
+						result = append(result, lhsLog)
+					}
+				}
+			}
+		}
+	}
+	return result, nil
+}
+
+func (b *BucketStore) fetchLogs(logs *[]*logapi.LogEntry) error {
+	// var results []*logapi.LogEntry
+	ctx := b.ctx
+
+	objectCh := b.client.ListObjects(ctx, b.config.Bucket, minio.ListObjectsOptions{
+		Recursive: true,
+	})
+
+	for object := range objectCh {
+		if object.Err != nil {
+			return object.Err
+		}
+
+		// TODO: utilize the key name we set to fetch stuffs
+		obj, err := b.client.GetObject(ctx, b.config.Bucket, object.Key, minio.GetObjectOptions{})
+		if err != nil {
+			return err
+		}
+
+		data, err := io.ReadAll(obj)
+		if err != nil {
+			return err
+		}
+
+		var batch logapi.LogBatch
+		if err := proto.Unmarshal(data, &batch); err != nil {
+			return err
+		}
+
+		entries := batch.GetEntries()
+		*logs = append(*logs, entries...)
+	}
+	return nil
 }

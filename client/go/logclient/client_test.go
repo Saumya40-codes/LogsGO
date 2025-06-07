@@ -265,4 +265,20 @@ func TestLogDataUploadToS3(t *testing.T) {
 	testutil.Assert(t, ok, "logs can't be uploaded")
 
 	time.Sleep(20 * time.Second) // TODO: this is time consuming but can't figure out better way, so adding t.Parallel's would do the job
+
+	// query logs now (we do this instead of labelvalues as underlying implementation to fetch is same for now)
+	resp, err := http.Get(`http://localhost:8080/api/v1/query?expression=level="warn"`)
+	testutil.Ok(t, err, "Failed to get query output from REST API after flushing")
+	defer resp.Body.Close()
+	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
+	var queryOutputAfterFlush []*logapi.LogEntry
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&queryOutputAfterFlush)
+	testutil.Ok(t, err, "Failed to decode query output from response after flushing")
+	testutil.Assert(t, len(queryOutputAfterFlush) > 0, "Expected at least one log entry in query output after flushing, got %d", len(queryOutputAfterFlush))
+	for _, log := range queryOutputAfterFlush {
+		testutil.Assert(t, log.Level == "warn", "Expected log level 'warn', got '%s'", log.Level)
+		testutil.Assert(t, log.Service == "ap-south1", "Expected log service 'ap-south1', got '%s'", log.Service)
+		testutil.Assert(t, log.Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", log.Message)
+	}
 }

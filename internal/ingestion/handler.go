@@ -51,12 +51,19 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 		log.Fatalf("failed to create bucket store from give configuration %v", err)
 	}
 
-	var nextStoreS3 store.Store = bucketStore
+	var nextStoreS3 store.Store
+	if bucketStore != nil {
+		nextStoreS3 = bucketStore
+	}
 
-	// disk store
-	localStore, err := store.NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit)
+	var localStore *store.LocalStore
+	if nextStoreS3 != nil {
+		localStore, err = store.NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit)
+	} else {
+		localStore, err = store.NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime, factory.FlushOnExit)
+	}
 	if err != nil {
-		log.Fatalf("failed to create local store: %v", err) // We can fatal out as creating the newlogingestoreserver is one of the first things we do
+		log.Fatalf("failed to create local store: %v", err)
 	}
 	var nextStore store.Store = localStore
 

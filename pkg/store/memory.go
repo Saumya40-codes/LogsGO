@@ -130,7 +130,7 @@ func (m *MemoryStore) Flush() error {
 			entry := mapToLogEntrys(logs, ts)
 			logsToBeFlushed = append(logsToBeFlushed, entry...)
 			// Remove the logs that are flushed
-			delete(m.logs, ts) // Remove the logs that are flushed
+			delete(m.logs, ts)
 		}
 	}
 
