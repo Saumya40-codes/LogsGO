@@ -36,7 +36,7 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	server := &LogIngestorServer{
 		shutdown: make(chan struct{}),
 	}
-	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir)
+	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir).WithCompactL0OnClose(true).WithValueLogFileSize(16 << 20)
 	badgerOpts.Logger = nil
 
 	// s3 store, if configured

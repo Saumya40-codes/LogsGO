@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"log"
 	"regexp"
 
 	"github.com/dgraph-io/badger/v4"
@@ -98,4 +99,18 @@ func (db *DB) Get(regex string) ([]string, []string, error) {
 		return nil, nil, fmt.Errorf("failed to get unique keys: %w", err)
 	}
 	return keys, values, nil
+}
+
+func (db *DB) RunGC() {
+	for {
+		err := db.conn.RunValueLogGC(0.5)
+
+		if err == badger.ErrNoRewrite {
+			break
+		}
+		if err != nil {
+			log.Printf("Badger GC error: %v", err) // TODO: switch to structurred logging
+		}
+		log.Println("Badger GC: reclaimed space after flush")
+	}
 }

@@ -202,6 +202,7 @@ func (l *LocalStore) Flush() error {
 		}
 	}
 
+	l.db.RunGC() // run post flushed gc to make sure deleted refs are rewritten in vlogs
 	return nil
 }
 
