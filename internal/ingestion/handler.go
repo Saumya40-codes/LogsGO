@@ -22,6 +22,7 @@ type LogIngestorServer struct {
 	mu       sync.Mutex
 	Store    store.Store // This is more of a linked list, this store is head which points to the next store, for now head is memory store
 	shutdown chan struct{}
+	cfg      GlobalConfig
 }
 
 type LogFilter struct {
@@ -32,9 +33,17 @@ type LogFilter struct {
 	Keyword      string
 }
 
+type GlobalConfig struct { // A central global config which applies irrespective of type of store
+	LookbackPeriod int64
+	QueryTime      int64
+}
+
 func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *LogIngestorServer {
 	server := &LogIngestorServer{
 		shutdown: make(chan struct{}),
+		cfg: GlobalConfig{
+			LookbackPeriod: int64(pkg.GetTimeDuration(factory.LookbackPeriod).Seconds()),
+		},
 	}
 	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir).WithCompactL0OnClose(true).WithValueLogFileSize(16 << 20)
 	badgerOpts.Logger = nil
@@ -116,13 +125,15 @@ func (s *LogIngestorServer) MakeQuery(query string) ([]*logapi.LogEntry, error) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.cfg.QueryTime = time.Now().Unix()
+
 	parse, err := logsgoql.ParseQuery(query)
 	if err != nil {
 		log.Printf("failed to parse query: %v", err)
 		return nil, err
 	}
 
-	logs, err := s.Store.Query(parse)
+	logs, err := s.Store.Query(parse, s.cfg.LookbackPeriod, s.cfg.QueryTime)
 	if err != nil {
 		log.Printf("failed to query logs: %v", err)
 		return nil, err

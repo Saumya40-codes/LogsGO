@@ -71,8 +71,6 @@ func NewBucketStore(ctx context.Context, path string, storeConfig string) (*Buck
 		ctx:    ctx,
 	}
 
-	fmt.Println("new bucket store created with ctx ", store.ctx)
-
 	if err = store.InitClient(); err != nil {
 		return nil, err
 	}
@@ -216,34 +214,38 @@ func (b *BucketStore) LabelValues(labels *Labels) error {
 	return nil
 }
 
-func (b *BucketStore) Query(filter LogFilter) ([]*logapi.LogEntry, error) {
+func (b *BucketStore) Query(filter LogFilter, lookback int64, qTime int64) ([]*logapi.LogEntry, error) {
 	var logs []*logapi.LogEntry
 	b.fetchLogs(&logs)
 	var result []*logapi.LogEntry
 
 	if filter.LHS == nil && filter.RHS == nil {
 		for _, log := range logs {
+			// Skip this log if it falls outside lookback period
+			if qTime-lookback > log.Timestamp {
+				continue
+			}
 			if log.Level == filter.Level || log.Service == filter.Service {
 				result = append(result, log)
 			}
 		}
 	} else {
 		if filter.Or {
-			lhsResults, err := b.Query(*filter.LHS)
+			lhsResults, err := b.Query(*filter.LHS, lookback, qTime)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query LHS: %w", err)
 			}
-			rhsResults, err := b.Query(*filter.RHS)
+			rhsResults, err := b.Query(*filter.RHS, lookback, qTime)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query RHS: %w", err)
 			}
 			result = append(lhsResults, rhsResults...)
 		} else {
-			lhsResults, err := b.Query(*filter.LHS)
+			lhsResults, err := b.Query(*filter.LHS, lookback, qTime)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query LHS: %w", err)
 			}
-			rhsResults, err := b.Query(*filter.RHS)
+			rhsResults, err := b.Query(*filter.RHS, lookback, qTime)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query RHS: %w", err)
 			}

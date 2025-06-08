@@ -56,10 +56,14 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry) error {
 	return nil // No error, insertion successful
 }
 
-func (m *MemoryStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
+func (m *MemoryStore) Query(parse LogFilter, lookback int64, qTime int64) ([]*logapi.LogEntry, error) {
 	var results []*logapi.LogEntry
 	if parse.LHS == nil && parse.RHS == nil {
 		for ts, logs := range m.logs {
+			// Skip if ts falls outside lookback
+			if qTime-lookback > ts {
+				continue
+			}
 			for service, levels := range logs {
 				if parse.Service != "" && service != parse.Service {
 					continue // Skip if service does not match
@@ -79,21 +83,21 @@ func (m *MemoryStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 		}
 
 	} else if parse.Or {
-		lhsResults, err := m.Query(*parse.LHS)
+		lhsResults, err := m.Query(*parse.LHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query LHS: %w", err)
 		}
-		rhsResults, err := m.Query(*parse.RHS)
+		rhsResults, err := m.Query(*parse.RHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
 		results = append(lhsResults, rhsResults...)
 	} else {
-		lhsResults, err := m.Query(*parse.LHS)
+		lhsResults, err := m.Query(*parse.LHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query LHS: %w", err)
 		}
-		rhsResults, err := m.Query(*parse.RHS)
+		rhsResults, err := m.Query(*parse.RHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
@@ -108,7 +112,7 @@ func (m *MemoryStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 
 	if m.next != nil {
 		if localStore, ok := (*m.next).(*LocalStore); ok {
-			result, err := localStore.Query(parse)
+			result, err := localStore.Query(parse, lookback, qTime)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query next store: %w", err)
 			}

@@ -10,7 +10,7 @@ import (
 
 // Store interfaces defines the methods that any store implementation should provide.
 type Store interface {
-	Query(filter LogFilter) ([]*logapi.LogEntry, error) // Returns logs matching the filter
+	Query(filter LogFilter, lookback int64, qTime int64) ([]*logapi.LogEntry, error) // Returns logs matching the filter
 	Insert(logs []*logapi.LogEntry) error
 	Flush() error
 	Close() error

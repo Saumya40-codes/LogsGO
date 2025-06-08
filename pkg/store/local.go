@@ -60,7 +60,7 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry) error {
 	return nil
 }
 
-func (l *LocalStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
+func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]*logapi.LogEntry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var results []*logapi.LogEntry
@@ -90,6 +90,11 @@ func (l *LocalStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid timestamp in key %s: %w", k, err)
 			}
+
+			// skip this sample if it falls outside time range
+			if qTime-lookback > int64(timestamp) {
+				continue
+			}
 			level := tokens[1]
 			service := tokens[2]
 			message := vals[i]
@@ -104,21 +109,21 @@ func (l *LocalStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 			}
 		}
 	} else if parse.Or {
-		lhsResults, err := l.Query(*parse.LHS)
+		lhsResults, err := l.Query(*parse.LHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query LHS: %w", err)
 		}
-		rhsResults, err := l.Query(*parse.RHS)
+		rhsResults, err := l.Query(*parse.RHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
 		results = append(lhsResults, rhsResults...)
 	} else {
-		lhsResults, err := l.Query(*parse.LHS)
+		lhsResults, err := l.Query(*parse.LHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query LHS: %w", err)
 		}
-		rhsResults, err := l.Query(*parse.RHS)
+		rhsResults, err := l.Query(*parse.RHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
@@ -137,7 +142,7 @@ func (l *LocalStore) Query(parse LogFilter) ([]*logapi.LogEntry, error) {
 
 	if l.next != nil {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			res, err := bucketStore.Query(parse)
+			res, err := bucketStore.Query(parse, lookback, qTime)
 			if err != nil {
 				return nil, err
 			}

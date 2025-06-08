@@ -16,6 +16,7 @@ type IngestionFactory struct {
 	StoreConfigPath  string
 	StoreConfig      string
 	WebListenAddr    string
+	LookbackPeriod   string
 }
 
 func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *IngestionFactory {
