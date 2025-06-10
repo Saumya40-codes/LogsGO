@@ -20,9 +20,13 @@ const ExpressionInput = () => {
         if (trimmedExpression === "") {
             return;
         }
-                
+        const baseUrl = "http://localhost:8080/api/v1/query"; // TODO: Make this dynamic
+        const params = new URLSearchParams();
+        params.set("expression", trimmedExpression)
+        const queryUrl = `${baseUrl}?${params.toString()}`;
+
         try {
-            const response = await fetch(`http://localhost:8080/api/v1/query?expression=${trimmedExpression}`, {
+            const response = await fetch(queryUrl, {
                 method: "GET",
                 headers: {
                     "Content-Type": "application/json",

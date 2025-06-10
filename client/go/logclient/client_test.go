@@ -3,6 +3,7 @@ package logclient
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -258,12 +259,18 @@ func TestLogDataUploadToS3(t *testing.T) {
 		Service: "ap-south1",
 	}
 
+	newOpt := &Opts{
+		Message: "Notification has been sent",
+		Level:   "info",
+		Service: "myService",
+	}
+
 	lc, err := NewLogClient(ctx)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
-
-	testutil.Assert(t, ok, "logs can't be uploaded")
+	ok1 := lc.UploadLog(newOpt)
+	testutil.Assert(t, ok && ok1, "logs can't be uploaded")
 
 	time.Sleep(20 * time.Second) // TODO: this is time consuming but can't figure out better way, so adding t.Parallel's would do the job
 
@@ -282,4 +289,18 @@ func TestLogDataUploadToS3(t *testing.T) {
 		testutil.Assert(t, log.Service == "ap-south1", "Expected log service 'ap-south1', got '%s'", log.Service)
 		testutil.Assert(t, log.Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", log.Message)
 	}
+
+	base := "http://localhost:8080/api/v1/query"
+	params := url.Values{}
+	params.Set("expression", "level=warn&level=info")
+	fullURL := base + "?" + params.Encode()
+
+	resp, err = http.Get(fullURL)
+	testutil.Ok(t, err, "Failed to get query output from REST API after flushing")
+	defer resp.Body.Close()
+	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&queryOutputAfterFlush)
+	testutil.Ok(t, err, "Failed to decode query output from response after flushing")
+	testutil.Assert(t, len(queryOutputAfterFlush) == 0, "Expected no log entry in query output after flushing, got %d", len(queryOutputAfterFlush))
 }

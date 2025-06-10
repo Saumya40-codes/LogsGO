@@ -61,8 +61,6 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry) error {
 }
 
 func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]*logapi.LogEntry, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	var results []*logapi.LogEntry
 
 	if parse.LHS == nil && parse.RHS == nil {
