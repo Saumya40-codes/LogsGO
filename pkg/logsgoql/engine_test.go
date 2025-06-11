@@ -89,6 +89,19 @@ func TestParseQuery(t *testing.T) {
 			expectError: false,
 		},
 		{
+			query: `service=cart&service=auth`,
+			expectedFilter: store.LogFilter{
+				Or: false,
+				LHS: &store.LogFilter{
+					Service: "cart",
+				},
+				RHS: &store.LogFilter{
+					Service: "auth",
+				},
+			},
+			expectError: false,
+		},
+		{
 			query: `level=info|service=auth&service=auth`,
 			expectedFilter: store.LogFilter{
 				Or: true,
