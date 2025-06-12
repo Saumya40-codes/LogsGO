@@ -14,6 +14,7 @@ const LogData = ({ logs }: { logs: LogsPayload[] }) => {
         <Table.Td>{log.service}</Table.Td>
         <Table.Td>{log.level}</Table.Td>
         <Table.Td>{log.message}</Table.Td>
+        <Table.Td>{log.count}</Table.Td>
         <Table.Td>{log.timestamp}</Table.Td>
         </Table.Tr>
     ));
@@ -26,6 +27,7 @@ const LogData = ({ logs }: { logs: LogsPayload[] }) => {
                     <Table.Th>Service</Table.Th>
                     <Table.Th>Level</Table.Th>
                     <Table.Th>Message</Table.Th>
+                    <Table.Th>Occurence</Table.Th>
                     <Table.Th>Timestamp</Table.Th>
                 </Table.Tr>
                 </Table.Thead>

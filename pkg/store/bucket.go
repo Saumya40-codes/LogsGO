@@ -106,7 +106,7 @@ func (b *BucketStore) InitClient() error {
 	return nil
 }
 
-func (b *BucketStore) Insert(logs []*logapi.LogEntry) error {
+func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]*CounterValue) error {
 	// now here have a dedicated file kinda thing for each entry won't make sense.
 	// we will create a chunks of 2h worth of data
 
@@ -128,7 +128,9 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry) error {
 	baseTimeStamp := logs[0].Timestamp
 	nextTimeStamp := getNextTimeStamp(baseTimeStamp, 2*time.Hour)
 
-	batches := make([]*logapi.LogEntry, 0)
+	batches := &logapi.SeriesBatch{
+		Entries: make([]*logapi.Series, 0),
+	}
 	key := fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, logs[0].Service)
 
 	for _, log := range logs {
@@ -138,7 +140,7 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry) error {
 			if err != nil {
 				return err
 			}
-			batches = batches[:0]
+			batches.Entries = batches.Entries[:0]
 
 			baseTimeStamp = log.Timestamp
 			nextTimeStamp = getNextTimeStamp(baseTimeStamp, 2*time.Hour)
@@ -146,11 +148,25 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry) error {
 			key = fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, log.Service)
 		}
 
-		batches = append(batches, log)
+		logkey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
+		logSeries, ok := series[logkey]
+		if !ok {
+			return fmt.Errorf("logKey %v not found in series", logkey)
+		}
+
+		entry, ok := logSeries[log.Timestamp]
+		if !ok {
+			return fmt.Errorf("timestamp %v not found in logKey series", log.Timestamp)
+		}
+		series := &logapi.Series{
+			Entry: log,
+			Count: uint64(entry.value),
+		}
+		batches.Entries = append(batches.Entries, series)
 	}
 
 	// Upload last batch if exists
-	if len(batches) > 0 {
+	if len(batches.Entries) > 0 {
 		if err := b.uploadLogsToStorage(batches, key); err != nil {
 			return err
 		}
@@ -159,11 +175,7 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry) error {
 	return nil
 }
 
-func (b *BucketStore) uploadLogsToStorage(logs []*logapi.LogEntry, objectName string) error {
-	batch := &logapi.LogBatch{
-		Entries: logs,
-	}
-
+func (b *BucketStore) uploadLogsToStorage(batch *logapi.SeriesBatch, objectName string) error {
 	data, err := proto.Marshal(batch)
 	if err != nil {
 		return fmt.Errorf("failed to marshal protobuf: %w", err)
@@ -200,33 +212,50 @@ func (b *BucketStore) Flush() error {
 
 // LabelValues returns the unique label values from the local store.
 func (b *BucketStore) LabelValues(labels *Labels) error {
-	var logs []*logapi.LogEntry
+	var logs []*logapi.Series
 	err := b.fetchLogs(&logs)
 	if err != nil {
 		return err
 	}
 
 	for _, log := range logs {
-		labels.Services[log.Service] = struct{}{}
-		labels.Levels[log.Level] = struct{}{}
+		labels.Services[log.Entry.Service] = struct{}{}
+		labels.Levels[log.Entry.Level] = struct{}{}
 	}
 
 	return nil
 }
 
-func (b *BucketStore) Query(filter LogFilter, lookback int64, qTime int64) ([]*logapi.LogEntry, error) {
-	var logs []*logapi.LogEntry
+func (b *BucketStore) Query(filter LogFilter, lookback int64, qTime int64) ([]QueryResponse, error) {
+	var logs []*logapi.Series
 	b.fetchLogs(&logs)
-	var result []*logapi.LogEntry
+	var result []QueryResponse
+
+	slices.SortFunc(logs, func(a, b *logapi.Series) int {
+		if a.Entry.Timestamp < b.Entry.Timestamp {
+			return 1
+		}
+		if a.Entry.Timestamp > b.Entry.Timestamp {
+			return -1
+		}
+		return 0
+	})
 
 	if filter.LHS == nil && filter.RHS == nil {
 		for _, log := range logs {
 			// Skip this log if it falls outside lookback period
-			if qTime-lookback > log.Timestamp {
+			if qTime-lookback > log.Entry.Timestamp {
 				continue
 			}
-			if log.Level == filter.Level || log.Service == filter.Service {
-				result = append(result, log)
+			if (filter.Level == "" || log.Entry.Level == filter.Level) && (filter.Service == "" || log.Entry.Service == filter.Service) {
+				result = append(result, QueryResponse{
+					Service:   log.Entry.Service,
+					Level:     log.Entry.Level,
+					Message:   log.Entry.Message,
+					Count:     log.Count,
+					TimeStamp: log.Entry.Timestamp,
+				})
+				break
 			}
 		}
 	} else {
@@ -251,7 +280,7 @@ func (b *BucketStore) Query(filter LogFilter, lookback int64, qTime int64) ([]*l
 			}
 			for _, lhsLog := range lhsResults {
 				for _, rhsLog := range rhsResults {
-					if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.Timestamp == rhsLog.Timestamp {
+					if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.TimeStamp == rhsLog.TimeStamp {
 						result = append(result, lhsLog)
 					}
 				}
@@ -261,7 +290,7 @@ func (b *BucketStore) Query(filter LogFilter, lookback int64, qTime int64) ([]*l
 	return result, nil
 }
 
-func (b *BucketStore) fetchLogs(logs *[]*logapi.LogEntry) error {
+func (b *BucketStore) fetchLogs(logs *[]*logapi.Series) error {
 	// var results []*logapi.LogEntry
 	ctx := b.ctx
 
@@ -285,13 +314,14 @@ func (b *BucketStore) fetchLogs(logs *[]*logapi.LogEntry) error {
 			return err
 		}
 
-		var batch logapi.LogBatch
-		if err := proto.Unmarshal(data, &batch); err != nil {
+		batch := &logapi.SeriesBatch{}
+		if err := proto.Unmarshal(data, batch); err != nil {
 			return err
 		}
 
-		entries := batch.GetEntries()
-		*logs = append(*logs, entries...)
+		if len(batch.Entries) > 0 {
+			*logs = append(*logs, batch.Entries...)
+		}
 	}
 	return nil
 }

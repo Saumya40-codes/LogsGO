@@ -3,6 +3,7 @@ export interface LogsPayload {
     level: string;
     message: string;
     timestamp: string;
+    count: number;
 }
 
 export interface LabelValuesProps {
