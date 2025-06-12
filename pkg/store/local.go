@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"strconv"
@@ -44,31 +45,42 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 	return lstore, nil
 }
 
-func (l *LocalStore) Insert(logs []*logapi.LogEntry) error {
+func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]*CounterValue) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	for _, log := range logs {
-		key := fmt.Sprintf("%d|%s|%s", log.Timestamp, log.Level, log.Service)
-		value := log.Message
-		err := l.db.Save(key, []byte(value))
-		if err != nil {
-			return fmt.Errorf("failed to insert log entry: %w", err)
+		// we store this way for efficient lookups, for querying we should convert back to series object
+		key := fmt.Sprintf("%d|%s|%s|%s", log.Timestamp, log.Level, log.Service, EncodeMessage(log.Message))
+		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
+		logSeries, ok := series[logKey]
+		if !ok {
+			return fmt.Errorf("logKey %v not found in series", logKey)
+		}
+
+		entry, ok := logSeries[log.Timestamp]
+		if !ok {
+			return fmt.Errorf("timestamp %v not found in logKey series", log.Timestamp)
+		}
+
+		valueStr := strconv.FormatInt(entry.value, 10)
+		if err := l.db.Save(key, []byte(valueStr)); err != nil {
+			return fmt.Errorf("failed to save  log to DB: %w", err)
 		}
 	}
 
 	return nil
 }
 
-func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]*logapi.LogEntry, error) {
-	var results []*logapi.LogEntry
+func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]QueryResponse, error) {
+	var results []QueryResponse
 
 	if parse.LHS == nil && parse.RHS == nil {
 		var key string
 		if parse.Level != "" {
-			key = fmt.Sprintf(`.*|%s|.*`, parse.Level)
+			key = fmt.Sprintf(`.*|%s|.*|.*`, parse.Level)
 		} else if parse.Service != "" {
-			key = fmt.Sprintf(`.*|.*|%s`, parse.Service)
+			key = fmt.Sprintf(`.*|.*|%s|.*`, parse.Service)
 		} else {
 			return nil, fmt.Errorf("invalid query: no labels provided")
 		}
@@ -79,9 +91,10 @@ func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]*log
 			}
 			return nil, fmt.Errorf("failed to query logs: %w", err)
 		}
+		nearestT := -1
 		for i, k := range keys {
 			tokens := strings.Split(k, "|")
-			if len(tokens) < 3 {
+			if len(tokens) < 4 {
 				continue // Invalid key format
 			}
 			timestamp, err := strconv.Atoi(tokens[0])
@@ -90,20 +103,32 @@ func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]*log
 			}
 
 			// skip this sample if it falls outside time range
-			if qTime-lookback > int64(timestamp) {
+			timeDiff := qTime - lookback
+			if timeDiff > int64(timestamp) {
 				continue
 			}
 			level := tokens[1]
 			service := tokens[2]
-			message := vals[i]
+			message, err := DecodeMessage(tokens[3])
+			if err != nil {
+				return nil, err
+			}
+			counterVal, err := strconv.Atoi(vals[i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid count in value %s: %w", vals[i], err)
+			}
 
-			if (parse.Level == "" || level == parse.Level) && (parse.Service == "" || service == parse.Service) {
-				results = append(results, &logapi.LogEntry{
-					Timestamp: int64(timestamp),
-					Level:     level,
-					Service:   service,
-					Message:   string(message),
-				})
+			if (parse.Level == "" || level == parse.Level) && (parse.Service == "" || service == parse.Service) && (timestamp > nearestT) {
+				nearestT = timestamp
+				results = []QueryResponse{
+					{
+						TimeStamp: int64(timestamp),
+						Level:     level,
+						Service:   service,
+						Message:   message,
+						Count:     uint64(counterVal),
+					},
+				}
 			}
 		}
 	} else if parse.Or {
@@ -126,14 +151,11 @@ func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]*log
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
 		// Intersect the results
-		resultsMap := make(map[string]*logapi.LogEntry)
-		for _, lhs := range lhsResults {
-			resultsMap[fmt.Sprintf("%d|%s|%s", lhs.Timestamp, lhs.Level, lhs.Service)] = lhs
-		}
-		for _, rhs := range rhsResults {
-			key := fmt.Sprintf("%d|%s|%s", rhs.Timestamp, rhs.Level, rhs.Service)
-			if entry, exists := resultsMap[key]; exists {
-				results = append(results, entry)
+		for _, lhsLog := range lhsResults {
+			for _, rhsLog := range rhsResults {
+				if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.TimeStamp == rhsLog.TimeStamp {
+					results = append(results, lhsLog)
+				}
 			}
 		}
 	}
@@ -156,6 +178,8 @@ func (l *LocalStore) Flush() error {
 	defer l.mu.Unlock()
 
 	var logs []*logapi.LogEntry
+	series := make(map[LogKey]map[int64]*CounterValue)
+
 	keys, vals, err := l.db.Get(".*")
 
 	if err != nil {
@@ -166,7 +190,7 @@ func (l *LocalStore) Flush() error {
 	}
 	for i, k := range keys {
 		tokens := strings.Split(k, "|")
-		if len(tokens) < 3 {
+		if len(tokens) < 4 {
 			continue // Invalid key format
 		}
 		timestamp, err := strconv.Atoi(tokens[0])
@@ -175,7 +199,25 @@ func (l *LocalStore) Flush() error {
 		}
 		level := tokens[1]
 		service := tokens[2]
-		message := vals[i]
+		message, err := DecodeMessage(tokens[3])
+		if err != nil {
+			return err
+		}
+
+		countValue, err := strconv.Atoi(vals[i])
+		if err != nil {
+			return err
+		}
+
+		logkey := LogKey{Service: service, Level: level, Message: message}
+		if series[logkey] == nil {
+			series[logkey] = make(map[int64]*CounterValue)
+		}
+		if series[logkey][int64(timestamp)] == nil {
+			series[logkey][int64(timestamp)] = &CounterValue{
+				value: int64(countValue),
+			}
+		}
 
 		if time.Now().Unix()-int64(timestamp) >= int64(l.maxTimeInDisk.Seconds()) {
 			logs = append(logs, &logapi.LogEntry{
@@ -189,7 +231,7 @@ func (l *LocalStore) Flush() error {
 
 	if l.next != nil {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			err := bucketStore.Insert(logs)
+			err := bucketStore.Insert(logs, series)
 			if err != nil {
 				return err
 			}
@@ -246,7 +288,7 @@ func (l *LocalStore) LabelValues(labels *Labels) error {
 func parseLabels(uniqueKeys []string, labels *Labels) error {
 	for _, key := range uniqueKeys {
 		tokens := strings.Split(key, "|")
-		if len(tokens) < 3 {
+		if len(tokens) < 4 {
 			continue // Invalid key format
 		}
 		service := tokens[2]
@@ -275,6 +317,15 @@ func (l *LocalStore) startFlushTimer() {
 			return
 		}
 	}
+}
+
+func EncodeMessage(msg string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(msg))
+}
+
+func DecodeMessage(encoded string) (string, error) {
+	data, err := base64.RawURLEncoding.DecodeString(encoded)
+	return string(data), err
 }
 
 // Insert -> key -> fmt.Sprintf("%d|%s|%s", entry.Timestamp, entry.Level, entry.Service) TODO think about how to parse message efficiently

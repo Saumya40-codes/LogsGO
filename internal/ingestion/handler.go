@@ -116,12 +116,26 @@ func (s *LogIngestorServer) UploadLog(ctx context.Context, req *logapi.LogEntry)
 	if req == nil {
 		return nil, nil // Not a best way to handle this, but we will do it for now
 	}
-	s.Store.Insert([]*logapi.LogEntry{req})
+	if err := s.Store.Insert([]*logapi.LogEntry{req}, nil); err != nil {
+		return &logapi.UploadResponse{Success: false}, err
+	}
 	s.mu.Unlock()
 	return &logapi.UploadResponse{Success: true}, nil
 }
 
-func (s *LogIngestorServer) MakeQuery(query string) ([]*logapi.LogEntry, error) {
+func (s *LogIngestorServer) UploadLogs(ctx context.Context, req *logapi.LogBatch) (*logapi.UploadResponse, error) {
+	s.mu.Lock()
+	if req == nil {
+		return nil, nil // Not a best way to handle this, but we will do it for now
+	}
+	if err := s.Store.Insert(req.Entries, nil); err != nil {
+		return &logapi.UploadResponse{Success: false}, err
+	}
+	s.mu.Unlock()
+	return &logapi.UploadResponse{Success: true}, nil
+}
+
+func (s *LogIngestorServer) MakeQuery(query string) ([]store.QueryResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

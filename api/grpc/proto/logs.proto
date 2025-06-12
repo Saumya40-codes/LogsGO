@@ -5,11 +5,7 @@ option go_package = "github.com/Saumya40-codes/LogsGO/api/grpc/pb;logapi";
 
 service LogIngestor {
     rpc UploadLog(LogEntry) returns (UploadResponse);
-}
-
-message LogCounter {
-  int64 timestamp = 1;
-  int64 count = 2;
+    rpc UploadLogs(LogBatch) returns (UploadResponse);
 }
 
 message LogEntry {
@@ -17,7 +13,6 @@ message LogEntry {
   string level = 2;
   string message = 3;
   int64 timestamp = 4;
-  repeated LogCounter logCounter = 5;
 }
 
 message LogBatch {
@@ -26,4 +21,13 @@ message LogBatch {
 
 message UploadResponse {
   bool success = 1;
+}
+
+message Series {
+  LogEntry entry  = 1;
+  uint64   count  = 2;
+}
+
+message SeriesBatch {
+  repeated Series entries = 1;
 }

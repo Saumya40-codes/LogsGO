@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	LogIngestor_UploadLog_FullMethodName = "/logapi.LogIngestor/UploadLog"
+	LogIngestor_UploadLog_FullMethodName  = "/logapi.LogIngestor/UploadLog"
+	LogIngestor_UploadLogs_FullMethodName = "/logapi.LogIngestor/UploadLogs"
 )
 
 // LogIngestorClient is the client API for LogIngestor service.
@@ -27,6 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type LogIngestorClient interface {
 	UploadLog(ctx context.Context, in *LogEntry, opts ...grpc.CallOption) (*UploadResponse, error)
+	UploadLogs(ctx context.Context, in *LogBatch, opts ...grpc.CallOption) (*UploadResponse, error)
 }
 
 type logIngestorClient struct {
@@ -47,11 +49,22 @@ func (c *logIngestorClient) UploadLog(ctx context.Context, in *LogEntry, opts ..
 	return out, nil
 }
 
+func (c *logIngestorClient) UploadLogs(ctx context.Context, in *LogBatch, opts ...grpc.CallOption) (*UploadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UploadResponse)
+	err := c.cc.Invoke(ctx, LogIngestor_UploadLogs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LogIngestorServer is the server API for LogIngestor service.
 // All implementations must embed UnimplementedLogIngestorServer
 // for forward compatibility.
 type LogIngestorServer interface {
 	UploadLog(context.Context, *LogEntry) (*UploadResponse, error)
+	UploadLogs(context.Context, *LogBatch) (*UploadResponse, error)
 	mustEmbedUnimplementedLogIngestorServer()
 }
 
@@ -64,6 +77,9 @@ type UnimplementedLogIngestorServer struct{}
 
 func (UnimplementedLogIngestorServer) UploadLog(context.Context, *LogEntry) (*UploadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UploadLog not implemented")
+}
+func (UnimplementedLogIngestorServer) UploadLogs(context.Context, *LogBatch) (*UploadResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UploadLogs not implemented")
 }
 func (UnimplementedLogIngestorServer) mustEmbedUnimplementedLogIngestorServer() {}
 func (UnimplementedLogIngestorServer) testEmbeddedByValue()                     {}
@@ -104,6 +120,24 @@ func _LogIngestor_UploadLog_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LogIngestor_UploadLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LogBatch)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogIngestorServer).UploadLogs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogIngestor_UploadLogs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogIngestorServer).UploadLogs(ctx, req.(*LogBatch))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LogIngestor_ServiceDesc is the grpc.ServiceDesc for LogIngestor service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -114,6 +148,10 @@ var LogIngestor_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UploadLog",
 			Handler:    _LogIngestor_UploadLog_Handler,
+		},
+		{
+			MethodName: "UploadLogs",
+			Handler:    _LogIngestor_UploadLogs_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
