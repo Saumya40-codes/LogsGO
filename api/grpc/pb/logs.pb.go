@@ -21,19 +21,72 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type LogCounter struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp     int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Count         int64                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogCounter) Reset() {
+	*x = LogCounter{}
+	mi := &file_logs_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogCounter) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogCounter) ProtoMessage() {}
+
+func (x *LogCounter) ProtoReflect() protoreflect.Message {
+	mi := &file_logs_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogCounter.ProtoReflect.Descriptor instead.
+func (*LogCounter) Descriptor() ([]byte, []int) {
+	return file_logs_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *LogCounter) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *LogCounter) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
 type LogEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Service       string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
 	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
 	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
 	Timestamp     int64                  `protobuf:"varint,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	LogCounter    []*LogCounter          `protobuf:"bytes,5,rep,name=logCounter,proto3" json:"logCounter,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LogEntry) Reset() {
 	*x = LogEntry{}
-	mi := &file_logs_proto_msgTypes[0]
+	mi := &file_logs_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -45,7 +98,7 @@ func (x *LogEntry) String() string {
 func (*LogEntry) ProtoMessage() {}
 
 func (x *LogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_logs_proto_msgTypes[0]
+	mi := &file_logs_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -58,7 +111,7 @@ func (x *LogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
 func (*LogEntry) Descriptor() ([]byte, []int) {
-	return file_logs_proto_rawDescGZIP(), []int{0}
+	return file_logs_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *LogEntry) GetService() string {
@@ -89,6 +142,13 @@ func (x *LogEntry) GetTimestamp() int64 {
 	return 0
 }
 
+func (x *LogEntry) GetLogCounter() []*LogCounter {
+	if x != nil {
+		return x.LogCounter
+	}
+	return nil
+}
+
 type LogBatch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Entries       []*LogEntry            `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
@@ -98,7 +158,7 @@ type LogBatch struct {
 
 func (x *LogBatch) Reset() {
 	*x = LogBatch{}
-	mi := &file_logs_proto_msgTypes[1]
+	mi := &file_logs_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -110,7 +170,7 @@ func (x *LogBatch) String() string {
 func (*LogBatch) ProtoMessage() {}
 
 func (x *LogBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_logs_proto_msgTypes[1]
+	mi := &file_logs_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -123,7 +183,7 @@ func (x *LogBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogBatch.ProtoReflect.Descriptor instead.
 func (*LogBatch) Descriptor() ([]byte, []int) {
-	return file_logs_proto_rawDescGZIP(), []int{1}
+	return file_logs_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *LogBatch) GetEntries() []*LogEntry {
@@ -142,7 +202,7 @@ type UploadResponse struct {
 
 func (x *UploadResponse) Reset() {
 	*x = UploadResponse{}
-	mi := &file_logs_proto_msgTypes[2]
+	mi := &file_logs_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -154,7 +214,7 @@ func (x *UploadResponse) String() string {
 func (*UploadResponse) ProtoMessage() {}
 
 func (x *UploadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_logs_proto_msgTypes[2]
+	mi := &file_logs_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -167,7 +227,7 @@ func (x *UploadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadResponse.ProtoReflect.Descriptor instead.
 func (*UploadResponse) Descriptor() ([]byte, []int) {
-	return file_logs_proto_rawDescGZIP(), []int{2}
+	return file_logs_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *UploadResponse) GetSuccess() bool {
@@ -182,12 +242,19 @@ var File_logs_proto protoreflect.FileDescriptor
 const file_logs_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"logs.proto\x12\x06logapi\"r\n" +
+	"logs.proto\x12\x06logapi\"@\n" +
+	"\n" +
+	"LogCounter\x12\x1c\n" +
+	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x03R\x05count\"\xa6\x01\n" +
 	"\bLogEntry\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
-	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"6\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\x122\n" +
+	"\n" +
+	"logCounter\x18\x05 \x03(\v2\x12.logapi.LogCounterR\n" +
+	"logCounter\"6\n" +
 	"\bLogBatch\x12*\n" +
 	"\aentries\x18\x01 \x03(\v2\x10.logapi.LogEntryR\aentries\"*\n" +
 	"\x0eUploadResponse\x12\x18\n" +
@@ -207,21 +274,23 @@ func file_logs_proto_rawDescGZIP() []byte {
 	return file_logs_proto_rawDescData
 }
 
-var file_logs_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_logs_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_logs_proto_goTypes = []any{
-	(*LogEntry)(nil),       // 0: logapi.LogEntry
-	(*LogBatch)(nil),       // 1: logapi.LogBatch
-	(*UploadResponse)(nil), // 2: logapi.UploadResponse
+	(*LogCounter)(nil),     // 0: logapi.LogCounter
+	(*LogEntry)(nil),       // 1: logapi.LogEntry
+	(*LogBatch)(nil),       // 2: logapi.LogBatch
+	(*UploadResponse)(nil), // 3: logapi.UploadResponse
 }
 var file_logs_proto_depIdxs = []int32{
-	0, // 0: logapi.LogBatch.entries:type_name -> logapi.LogEntry
-	0, // 1: logapi.LogIngestor.UploadLog:input_type -> logapi.LogEntry
-	2, // 2: logapi.LogIngestor.UploadLog:output_type -> logapi.UploadResponse
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // 0: logapi.LogEntry.logCounter:type_name -> logapi.LogCounter
+	1, // 1: logapi.LogBatch.entries:type_name -> logapi.LogEntry
+	1, // 2: logapi.LogIngestor.UploadLog:input_type -> logapi.LogEntry
+	3, // 3: logapi.LogIngestor.UploadLog:output_type -> logapi.UploadResponse
+	3, // [3:4] is the sub-list for method output_type
+	2, // [2:3] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_logs_proto_init() }
@@ -235,7 +304,7 @@ func file_logs_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_logs_proto_rawDesc), len(file_logs_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
