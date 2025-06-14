@@ -20,18 +20,7 @@ type MemoryStore struct {
 	shutdown        chan struct{} // Channel to signal shutdown of the store
 	flushOnExit     bool
 	series          map[LogKey]map[int64]*CounterValue
-}
-
-// key used for mappings
-type LogKey struct {
-	Service string
-	Message string
-	Level   string
-}
-
-type CounterValue struct {
-	mu    sync.Mutex
-	value int64
+	index           *ShardedLogIndex // shared log index
 }
 
 func (c *CounterValue) Inc() {
@@ -40,7 +29,7 @@ func (c *CounterValue) Inc() {
 	c.value++
 }
 
-func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool) *MemoryStore {
+func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index *ShardedLogIndex) *MemoryStore {
 	mstore := &MemoryStore{
 		logs:            make([]*logapi.LogEntry, 0),
 		mu:              sync.Mutex{},
@@ -50,6 +39,7 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool) *Memo
 		shutdown:        make(chan struct{}),
 		flushOnExit:     flushOnExit,
 		series:          make(map[LogKey]map[int64]*CounterValue),
+		index:           index,
 	}
 
 	go mstore.startFlushTimer()
@@ -63,13 +53,13 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]*Co
 	for _, log := range logs {
 		key := LogKey{log.Service, log.Message, log.Level}
 		ts := log.Timestamp
+		m.index.Inc(key)
+		shardedSeries := m.index.getShard(key)
 		if m.series[key] == nil {
 			m.series[key] = make(map[int64]*CounterValue)
 		}
-		if m.series[key][ts] == nil {
-			m.series[key][ts] = &CounterValue{}
-		}
-		m.series[key][ts].Inc()
+		newCounterVal := shardedSeries.data[key]
+		m.series[key][ts] = newCounterVal
 	}
 	return nil
 }
@@ -119,9 +109,8 @@ func (m *MemoryStore) Query(parse LogFilter, lookback int64, qTime int64) ([]Que
 				Count:     uint64(entry.value),
 			})
 
-			break // we found the nearest value so break
+			return results, nil // we found the nearest value so return
 		}
-
 	} else if parse.Or {
 		lhsResults, err := m.Query(*parse.LHS, lookback, qTime)
 		if err != nil {

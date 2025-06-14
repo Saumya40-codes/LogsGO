@@ -38,9 +38,10 @@ type BucketStore struct {
 	mu     sync.Mutex
 	config BucketStoreConfig
 	ctx    context.Context
+	index  *ShardedLogIndex // shared log index
 }
 
-func NewBucketStore(ctx context.Context, path string, storeConfig string) (*BucketStore, error) {
+func NewBucketStore(ctx context.Context, path string, storeConfig string, index *ShardedLogIndex) (*BucketStore, error) {
 	var configData []byte
 	var err error
 
@@ -69,6 +70,7 @@ func NewBucketStore(ctx context.Context, path string, storeConfig string) (*Buck
 		config: BucketCfg.RemoteStore,
 		mu:     sync.Mutex{},
 		ctx:    ctx,
+		index:  index,
 	}
 
 	if err = store.InitClient(); err != nil {

@@ -48,13 +48,15 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir).WithCompactL0OnClose(true).WithValueLogFileSize(16 << 20)
 	badgerOpts.Logger = nil
 
+	shardIndex := store.NewShardedLogIndex()
+
 	// s3 store, if configured
 	var bucketStore *store.BucketStore
 	var err error
 	if factory.StoreConfigPath != "" {
-		bucketStore, err = store.NewBucketStore(ctx, factory.StoreConfigPath, "")
+		bucketStore, err = store.NewBucketStore(ctx, factory.StoreConfigPath, "", shardIndex)
 	} else if factory.StoreConfig != "" {
-		bucketStore, err = store.NewBucketStore(ctx, "", factory.StoreConfig)
+		bucketStore, err = store.NewBucketStore(ctx, "", factory.StoreConfig, shardIndex)
 	}
 	if err != nil {
 		log.Fatalf("failed to create bucket store from give configuration %v", err)
@@ -67,9 +69,9 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 
 	var localStore *store.LocalStore
 	if nextStoreS3 != nil {
-		localStore, err = store.NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit)
+		localStore, err = store.NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex)
 	} else {
-		localStore, err = store.NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime, factory.FlushOnExit)
+		localStore, err = store.NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex)
 	}
 	if err != nil {
 		log.Fatalf("failed to create local store: %v", err)
@@ -77,7 +79,7 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	var nextStore store.Store = localStore
 
 	// memory store
-	memStore := store.NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.FlushOnExit) // internally creates a goroutine to flush logs periodically
+	memStore := store.NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.FlushOnExit, shardIndex) // internally creates a goroutine to flush logs periodically
 	var headStore store.Store = memStore
 	server.Store = headStore
 	return server
