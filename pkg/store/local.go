@@ -120,17 +120,15 @@ func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]Quer
 				return nil, fmt.Errorf("invalid count in value %s: %w", vals[i], err)
 			}
 
-			if (parse.Level == "" || level == parse.Level) && (parse.Service == "" || service == parse.Service) && (timestamp > nearestT) {
+			if ((parse.Level != "" && level == parse.Level) || (parse.Service != "" && service == parse.Service)) && (timestamp > nearestT) {
 				nearestT = timestamp
-				results = []QueryResponse{
-					{
-						TimeStamp: int64(timestamp),
-						Level:     level,
-						Service:   service,
-						Message:   message,
-						Count:     uint64(counterVal),
-					},
-				}
+				results = append(results, QueryResponse{
+					TimeStamp: int64(timestamp),
+					Level:     level,
+					Service:   service,
+					Message:   message,
+					Count:     uint64(counterVal),
+				})
 			}
 		}
 	} else if parse.Or {

@@ -18,3 +18,5 @@ start-react-app:
 build-react-app:
 	cd ./pkg/ui && \
 	npm run build
+
+build-all: build-react-app build

@@ -103,8 +103,6 @@ func (m *MemoryStore) Query(parse LogFilter, lookback int64, qTime int64) ([]Que
 				Message:   logs.Message,
 				Count:     uint64(entry.value),
 			})
-
-			break // we found the nearest value so return
 		}
 	} else if parse.Or {
 		lhsResults, err := m.Query(*parse.LHS, lookback, qTime)
