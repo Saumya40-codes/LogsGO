@@ -22,14 +22,18 @@ type LabelValuesResponse struct {
 func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cfg *pkg.IngestionFactory) {
 	r := gin.Default()
 
+	allowedOrigins := []string{"http://localhost:5173"}
+
 	origin := cfg.WebListenAddr
 	if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
 		log.Println("http/https scheme not set in url: using default http scheme for configuring AllowOrigins in CORS")
 		origin = "http://" + origin
 	}
 
+	allowedOrigins = append(allowedOrigins, origin)
+
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{origin},
+		AllowOrigins:     allowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
