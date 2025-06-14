@@ -24,12 +24,23 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 
 	allowedOrigins := []string{"http://localhost:5173"}
 
-	origin := cfg.WebListenAddr
-	if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
-		log.Println("http/https scheme not set in url: using default http scheme for configuring AllowOrigins in CORS")
-		origin = "http://" + origin
+	addr := strings.Split(cfg.WebListenAddr, ":")
+	var host, port string
+	if len(addr) == 2 {
+		host = addr[0]
+		port = addr[1]
+	} else if len(addr) == 1 {
+		host = addr[0]
+		port = "80"
+	} else {
+		log.Printf("unexpected WebListenAddr format: %s", cfg.WebListenAddr)
 	}
 
+	if host == "0.0.0.0" || host == "" {
+		host = "localhost"
+	}
+
+	origin := "http://" + host + ":" + port
 	allowedOrigins = append(allowedOrigins, origin)
 
 	r.Use(cors.New(cors.Config{
