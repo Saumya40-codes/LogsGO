@@ -25,13 +25,14 @@ var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush m
 	MaxRetentionTime: "10d", // this is the time after which logs will be deleted from disk
 	WebListenAddr:    "*",
 	LookbackPeriod:   "15m",
+	GrpcListenAddr:   ":50051",
 }
 
 func TestGRPCConn(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -42,7 +43,7 @@ func TestGRPCConn(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(ctx)
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
@@ -54,7 +55,7 @@ func TestDirCreated(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
 	go rest.StartServer(ctx, serv, &factory)
 
 	// waiting for server to start
@@ -66,7 +67,7 @@ func TestDirCreated(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(ctx)
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
@@ -96,7 +97,7 @@ func TestLabelValues(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
 	go rest.StartServer(ctx, serv, &factory)
 
 	// waiting for server to start
@@ -108,7 +109,7 @@ func TestLabelValues(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(ctx)
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
@@ -163,7 +164,7 @@ func TestQueryOutput(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
 	go rest.StartServer(ctx, serv, &factory)
 
 	// waiting for server to start
@@ -175,7 +176,7 @@ func TestQueryOutput(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(ctx)
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)
@@ -270,7 +271,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
 	go rest.StartServer(ctx, serv, &factory)
 
 	// waiting for server to start
@@ -288,7 +289,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 		Service: "myService",
 	}
 
-	lc, err := NewLogClient(ctx)
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	ok := lc.UploadLog(opts)

@@ -12,6 +12,7 @@ type IngestionFactory struct {
 	MaxTimeInMem     string
 	UnLockDataDir    bool
 	HttpListenAddr   string
+	GrpcListenAddr   string
 	FlushOnExit      bool
 	StoreConfigPath  string
 	StoreConfig      string

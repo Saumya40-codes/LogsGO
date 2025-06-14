@@ -48,7 +48,7 @@ var rootCmd = &cobra.Command{
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			ingestion.StartServer(ctx, serv)
+			ingestion.StartServer(ctx, serv, cfg.GrpcListenAddr)
 		}()
 
 		go func() {
@@ -76,6 +76,7 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.MaxTimeInMem, "max-time-in-mem", "1h", "Time logs remain in memory before persisting to disk. Suffix with d/m/h/s")
 	rootCmd.Flags().BoolVar(&cfg.UnLockDataDir, "unlock-data-dir", false, "Allow other processes to access data directory (not recommended)")
 	rootCmd.Flags().StringVar(&cfg.HttpListenAddr, "http-listen-addr", ":8080", "HTTP server listen address for REST API")
+	rootCmd.Flags().StringVar(&cfg.GrpcListenAddr, "grpc-listen-addr", ":50051", "gRPC server listen address for ingestion")
 	rootCmd.Flags().BoolVar(&cfg.FlushOnExit, "flush-on-exit", false, "If set on exit under any condition, logs will be flushed to its next store, if you want complete persistance")
 	rootCmd.Flags().StringVar(&cfg.StoreConfigPath, "store-config-path", "", "Path to your s3 compatible store config path, if any")
 	rootCmd.Flags().StringVar(&cfg.StoreConfig, "store-config", "", "s3 compatible store configuration, can't be used with --store-config-path flag")

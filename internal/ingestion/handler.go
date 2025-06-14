@@ -85,8 +85,8 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	return server
 }
 
-func StartServer(ctx context.Context, serv *LogIngestorServer) {
-	lis, err := net.Listen("tcp", ":50051")
+func StartServer(ctx context.Context, serv *LogIngestorServer, addr string) {
+	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen on port 50051: %v", err)
 	}

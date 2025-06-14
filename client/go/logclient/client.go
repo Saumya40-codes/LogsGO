@@ -23,8 +23,9 @@ type Client struct {
 }
 
 // NewClient creates a new gRPC client to the log server.
-func NewLogClient(ctx context.Context) (*Client, error) {
-	conn, err := grpc.NewClient("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+// Addr paramter should contain the address at which logsGo gRPC server is running (which is :50051 by default)
+func NewLogClient(ctx context.Context, addr string) (*Client, error) {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
