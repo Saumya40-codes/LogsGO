@@ -11,11 +11,11 @@ const LogData = ({ logs }: { logs: LogsPayload[] }) => {
 
     const rows = logs.map((log, index) => (
         <Table.Tr key={index}>
-        <Table.Td>{log.service}</Table.Td>
-        <Table.Td>{log.level}</Table.Td>
-        <Table.Td>{log.message}</Table.Td>
-        <Table.Td>{log.count}</Table.Td>
-        <Table.Td>{log.timestamp}</Table.Td>
+        <Table.Td>{log.Service}</Table.Td>
+        <Table.Td>{log.Level}</Table.Td>
+        <Table.Td>{log.Message}</Table.Td>
+        <Table.Td>{log.Count}</Table.Td>
+        <Table.Td>{log.Timestamp}</Table.Td>
         </Table.Tr>
     ));
 
@@ -27,7 +27,7 @@ const LogData = ({ logs }: { logs: LogsPayload[] }) => {
                     <Table.Th>Service</Table.Th>
                     <Table.Th>Level</Table.Th>
                     <Table.Th>Message</Table.Th>
-                    <Table.Th>Occurence</Table.Th>
+                    <Table.Th>Count</Table.Th>
                     <Table.Th>Timestamp</Table.Th>
                 </Table.Tr>
                 </Table.Thead>

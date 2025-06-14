@@ -1,9 +1,9 @@
 export interface LogsPayload {
-    service: string;
-    level: string;
-    message: string;
-    timestamp: string;
-    count: number;
+    Service: string;
+    Level: string;
+    Message: string;
+    Timestamp: string;
+    Count: number;
 }
 
 export interface LabelValuesProps {

@@ -224,21 +224,6 @@ func (m *MemoryStore) startFlushTimer() {
 	}
 }
 
-func mapToLogEntrys(logs map[string]map[string]string, ts int64) []*logapi.LogEntry {
-	var entries []*logapi.LogEntry
-	for service, levels := range logs {
-		for level, message := range levels {
-			entries = append(entries, &logapi.LogEntry{
-				Timestamp: ts,
-				Service:   service,
-				Level:     level,
-				Message:   message,
-			})
-		}
-	}
-	return entries
-}
-
 // LabelValues returns the unique label values from the local store. We will have chain of stores, so this will return the unique values from all the stores in the chain.
 func (m *MemoryStore) LabelValues(labels *Labels) error {
 	for _, logs := range m.logs {
