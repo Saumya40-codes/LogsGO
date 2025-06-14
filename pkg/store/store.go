@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
@@ -38,6 +39,18 @@ type QueryResponse struct {
 	Message   string
 	TimeStamp int64
 	Count     uint64
+}
+
+// key used for mappings
+type LogKey struct {
+	Service string
+	Message string
+	Level   string
+}
+
+type CounterValue struct {
+	mu    sync.Mutex
+	value uint64
 }
 
 var (

@@ -23,10 +23,11 @@ type LocalStore struct {
 	next          *Store // Next store in the chain, if any
 	shutdown      chan struct{}
 	flushOnExit   bool
-	lastFlushTime int64 // Timestamp of the last flush operation
+	lastFlushTime int64            // Timestamp of the last flush operation
+	index         *ShardedLogIndex // shared log index
 }
 
-func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flushOnExit bool) (*LocalStore, error) {
+func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flushOnExit bool, index *ShardedLogIndex) (*LocalStore, error) {
 	db, err := pkg.OpenDB(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open local store: %w", err)
@@ -39,6 +40,7 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 		maxTimeInDisk: pkg.GetTimeDuration(maxTimeInDisk),
 		flushOnExit:   flushOnExit,
 		lastFlushTime: 0,
+		index:         index,
 	}
 
 	go lstore.startFlushTimer()
@@ -63,7 +65,7 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 			return fmt.Errorf("timestamp %v not found in logKey series", log.Timestamp)
 		}
 
-		valueStr := strconv.FormatInt(entry.value, 10)
+		valueStr := strconv.FormatUint(entry.value, 10)
 		if err := l.db.Save(key, []byte(valueStr)); err != nil {
 			return fmt.Errorf("failed to save  log to DB: %w", err)
 		}
@@ -215,7 +217,7 @@ func (l *LocalStore) Flush() error {
 		}
 		if series[logkey][int64(timestamp)] == nil {
 			series[logkey][int64(timestamp)] = &CounterValue{
-				value: int64(countValue),
+				value: uint64(countValue),
 			}
 		}
 

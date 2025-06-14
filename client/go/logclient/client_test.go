@@ -219,6 +219,28 @@ func TestQueryOutput(t *testing.T) {
 		testutil.Assert(t, log.Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", log.Message)
 		testutil.Assert(t, log.Count == 1, "Expected log counter to have value 1 got '%d'", log.Count)
 	}
+
+	// upload log again, this time with same field it should go to mem store (note: we have same labeled in local store now)
+	// but it shouldn't affect the fact that count of it now should be 2 (occurred 2 times)
+	newOpt := *opts
+	ok = lc.UploadLog(&newOpt)
+	testutil.Assert(t, ok, "logs can't be uploaded")
+
+	resp, err = http.Get(`http://localhost:8080/api/v1/query?expression=level="warn"`)
+	testutil.Ok(t, err, "Failed to get query output from REST API after flushing")
+	defer resp.Body.Close()
+	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
+	var queryOutputAfterLocal []store.QueryResponse
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&queryOutputAfterLocal)
+	testutil.Ok(t, err, "Failed to decode query output from response after flushing")
+	testutil.Assert(t, len(queryOutputAfterLocal) > 0, "Expected at least one log entry in query output after flushing, got %d", len(queryOutputAfterLocal))
+	for _, log := range queryOutputAfterLocal {
+		testutil.Assert(t, log.Level == "warn", "Expected log level 'warn', got '%s'", log.Level)
+		testutil.Assert(t, log.Service == "ap-south1", "Expected log service 'ap-south1', got '%s'", log.Service)
+		testutil.Assert(t, log.Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", log.Message)
+		testutil.Assert(t, log.Count == 2, "Expected log counter to have value 2 got '%d'", log.Count)
+	}
 }
 
 func TestLogDataUploadToS3(t *testing.T) {
