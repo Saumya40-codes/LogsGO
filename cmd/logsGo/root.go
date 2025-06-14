@@ -30,10 +30,6 @@ var rootCmd = &cobra.Command{
 			log.Fatal("--store-config and --store-config-path flag can't be used together")
 		}
 
-		if !strings.HasPrefix(cfg.WebListenAddr, "http://") && !strings.HasPrefix(cfg.WebListenAddr, "https://") {
-			log.Fatal("--web-listen-addr should have http or https as prefix to the main url")
-		}
-
 		log.Println("Starting LogsGo ingestion service...")
 
 		ctx, cancel := context.WithCancel(context.Background())
