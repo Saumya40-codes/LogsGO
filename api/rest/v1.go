@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
@@ -21,8 +22,14 @@ type LabelValuesResponse struct {
 func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cfg *pkg.IngestionFactory) {
 	r := gin.Default()
 
+	origin := cfg.WebListenAddr
+	if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
+		log.Println("http/https scheme not set in url: using default http scheme for configuring AllowOrigins in CORS")
+		origin = "http://" + origin
+	}
+
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{cfg.WebListenAddr},
+		AllowOrigins:     []string{origin},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
