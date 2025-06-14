@@ -101,6 +101,7 @@ func StartUIServer(ctx context.Context, webListenAddr string) {
 		}
 	}()
 
+	log.Printf("UI server started at %v\n", webListenAddr)
 	<-ctx.Done()
 	log.Println("Shutting down UI server...")
 	if err := srv.Shutdown(context.Background()); err != nil {
