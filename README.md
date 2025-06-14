@@ -5,8 +5,6 @@
 
 **LogsGo** is a standalone, scalable log ingestion and querying service designed for infinite log retention. It features a multi-tiered store architecture, pluggable backends, and a web-based dashboard. Logs are ingested via gRPC and flushed across configured stores based on a customizable time interval.
 
-> 🚧 **This project is a Work in Progress (WIP)** — APIs, store behavior, and dashboard features are actively evolving. Check the [`/docs`](./docs) folder for the latest design discussions and documentation.
-
 ---
 
 ## Features
@@ -56,7 +54,15 @@
 4. Queries traverse through each store using a `.next` store in chain until results are found.
 
 ---
+## DataModel Overview
 
+![Data Model](docs/data_model.png)
+
+---
+## Query Execution Overview
+
+![Querying Execution](docs/query-execution.png)
 
 ## Current State
-![LogsGo Current State](https://github.com/user-attachments/assets/5f949a90-7a8e-4583-86da-71464978a24e)
+![LogsGo Current State](docs/v0.1.0-status.png)
+
