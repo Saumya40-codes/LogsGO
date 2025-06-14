@@ -66,3 +66,4 @@
 ## Current State
 ![LogsGo Current State](docs/v0.1.0-status.png)
 
+The output you see is an instant query, many of the logs you see were first uploaded to s3 and local storage, the count you see is an aggregation and timestamp is the time at which this was found in latest
