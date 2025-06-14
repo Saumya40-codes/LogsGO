@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"slices"
+	"sort"
 	"sync"
 	"time"
 
@@ -145,6 +146,7 @@ func (m *MemoryStore) Query(parse LogFilter, lookback int64, qTime int64) ([]Que
 		}
 	}
 
+	results = deDuplicate(results)
 	return results, nil
 }
 
@@ -233,4 +235,26 @@ func (m *MemoryStore) LabelValues(labels *Labels) error {
 	}
 
 	return nil
+}
+
+func deDuplicate(res []QueryResponse) []QueryResponse {
+	// only take latest timestamp into consideration for a query response
+	sort.Slice(res, func(a, b int) bool {
+		return res[a].TimeStamp > res[b].TimeStamp
+	})
+
+	vis := make(map[LogKey]struct{})
+
+	dedupResponse := make([]QueryResponse, 0)
+
+	for _, r := range res {
+		key := LogKey{Service: r.Service, Level: r.Level, Message: r.Message}
+
+		if _, ok := vis[key]; !ok {
+			vis[key] = struct{}{}
+			dedupResponse = append(dedupResponse, r)
+		}
+	}
+
+	return dedupResponse
 }
