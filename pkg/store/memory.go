@@ -23,12 +23,6 @@ type MemoryStore struct {
 	index           *ShardedLogIndex // shared log index
 }
 
-func (c *CounterValue) Inc() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.value++
-}
-
 func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index *ShardedLogIndex) *MemoryStore {
 	mstore := &MemoryStore{
 		logs:            make([]*logapi.LogEntry, 0),
@@ -109,7 +103,7 @@ func (m *MemoryStore) Query(parse LogFilter, lookback int64, qTime int64) ([]Que
 				Count:     uint64(entry.value),
 			})
 
-			return results, nil // we found the nearest value so return
+			break // we found the nearest value so return
 		}
 	} else if parse.Or {
 		lhsResults, err := m.Query(*parse.LHS, lookback, qTime)

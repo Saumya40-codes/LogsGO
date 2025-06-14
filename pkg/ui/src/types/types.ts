@@ -2,7 +2,7 @@ export interface LogsPayload {
     Service: string;
     Level: string;
     Message: string;
-    Timestamp: string;
+    TimeStamp: string;
     Count: number;
 }
 

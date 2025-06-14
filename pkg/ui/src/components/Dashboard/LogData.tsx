@@ -15,7 +15,7 @@ const LogData = ({ logs }: { logs: LogsPayload[] }) => {
         <Table.Td>{log.Level}</Table.Td>
         <Table.Td>{log.Message}</Table.Td>
         <Table.Td>{log.Count}</Table.Td>
-        <Table.Td>{log.Timestamp}</Table.Td>
+        <Table.Td>{log.TimeStamp}</Table.Td>
         </Table.Tr>
     ));
 
