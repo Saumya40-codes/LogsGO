@@ -4,6 +4,11 @@ on:
   push:
     branches: 
       - main
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - 'examples/**'
+      - '.github/**'
       
 jobs:
   build-and-push:
