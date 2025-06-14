@@ -4,4 +4,4 @@ remote_store:
   access_key: "minioadmin"
   secret_key: "minioadmin"
   create_bucket_on_empty: true
-  endpoint: "127.0.0.1:9000"
+  endpoint: "minio:9000"
