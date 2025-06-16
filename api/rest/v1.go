@@ -66,8 +66,8 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 
 		api.GET("/labels", func(g *gin.Context) {
 			labels := &store.Labels{
-				Services: map[string]struct{}{},
-				Levels:   map[string]struct{}{},
+				Services: make(map[string]int),
+				Levels:   make(map[string]int),
 			}
 			err := logServer.Store.LabelValues(labels)
 
@@ -137,11 +137,11 @@ func ConvertToResponse(labels store.Labels) LabelValuesResponse {
 		Levels:   make([]string, 0),
 	}
 
-	for service, _ := range labels.Services {
+	for service := range labels.Services {
 		resp.Services = append(resp.Services, service)
 	}
 
-	for level, _ := range labels.Levels {
+	for level := range labels.Levels {
 		resp.Levels = append(resp.Levels, level)
 	}
 

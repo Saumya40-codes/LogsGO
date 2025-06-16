@@ -3,7 +3,6 @@ package store
 import (
 	"errors"
 	"strings"
-	"sync"
 	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
@@ -20,9 +19,9 @@ type Store interface {
 }
 
 type Labels struct {
-	Services map[string]struct{}
-	Levels   map[string]struct{}
-	// TODO: Add keywords or other labels if needed
+	Services map[string]int
+	Levels   map[string]int
+	// TODO: Add support for custom labels in the future
 }
 
 type LogFilter struct {
@@ -49,7 +48,6 @@ type LogKey struct {
 }
 
 type CounterValue struct {
-	mu    sync.Mutex
 	value uint64
 }
 

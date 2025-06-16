@@ -7,17 +7,19 @@ import (
 )
 
 type IngestionFactory struct {
-	DataDir          string
-	MaxRetentionTime string
-	MaxTimeInMem     string
-	UnLockDataDir    bool
-	HttpListenAddr   string
-	GrpcListenAddr   string
-	FlushOnExit      bool
-	StoreConfigPath  string
-	StoreConfig      string
-	WebListenAddr    string
-	LookbackPeriod   string
+	DataDir                 string
+	MaxRetentionTime        string
+	MaxTimeInMem            string
+	UnLockDataDir           bool
+	HttpListenAddr          string
+	GrpcListenAddr          string
+	FlushOnExit             bool
+	StoreConfigPath         string
+	StoreConfig             string
+	WebListenAddr           string
+	LookbackPeriod          string
+	MemStoreFlushDuration   string
+	LocalStoreFlushDuration string
 }
 
 func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *IngestionFactory {

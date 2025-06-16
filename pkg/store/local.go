@@ -2,8 +2,12 @@ package store
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +29,7 @@ type LocalStore struct {
 	flushOnExit   bool
 	lastFlushTime int64            // Timestamp of the last flush operation
 	index         *ShardedLogIndex // shared log index
+	dataDir       string           // Directory where the local store data is stored
 }
 
 func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flushOnExit bool, index *ShardedLogIndex) (*LocalStore, error) {
@@ -41,7 +46,16 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 		flushOnExit:   flushOnExit,
 		lastFlushTime: 0,
 		index:         index,
+		dataDir:       opts.Dir, // Store the directory where the local store data is stored
 	}
+
+	// creata a meta.json file to store all unique labels for this store
+	dir, err := os.Create(fmt.Sprintf("%s/meta.json", opts.Dir))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create meta.json file: %w", err)
+	}
+	defer dir.Close()
+	// Initialize the meta labels
 
 	go lstore.startFlushTimer()
 	return lstore, nil
@@ -50,6 +64,23 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]*CounterValue) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	// open meta.json file to store all unique labels for this store
+	if len(logs) == 0 {
+		return nil
+	}
+
+	file, err := getMetaFile(l.dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to open required files in data dir: %w", err)
+	}
+	defer file.Close()
+
+	var metaLabels Labels
+
+	if err := parseLabelsFromFile(file, &metaLabels); err != nil {
+		return fmt.Errorf("failed to parse meta labels: %w", err)
+	}
 
 	for _, log := range logs {
 		// we store this way for efficient lookups, for querying we should convert back to series object
@@ -69,8 +100,15 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 		if err := l.db.Save(key, []byte(valueStr)); err != nil {
 			return fmt.Errorf("failed to save  log to DB: %w", err)
 		}
+
+		metaLabels.Services[log.Service]++
+		metaLabels.Levels[log.Level]++
 	}
 
+	// Write the updated meta labels to the file
+	if err := writeLabelsToFile(file, metaLabels, l.dataDir); err != nil {
+		return fmt.Errorf("failed to write meta labels to file: %w", err)
+	}
 	return nil
 }
 
@@ -181,13 +219,26 @@ func (l *LocalStore) Flush() error {
 	series := make(map[LogKey]map[int64]*CounterValue)
 
 	keys, vals, err := l.db.Get(".*")
-
 	if err != nil {
 		if err == badger.ErrKeyNotFound {
-			return fmt.Errorf("no logs found for the given filter: %w", err)
+			log.Println("No logs found to flush")
+			return nil
 		}
 		return fmt.Errorf("failed to query logs: %w", err)
 	}
+
+	// get meta.json file to store all unique labels for this store
+	file, err := getMetaFile(l.dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to open required files in data dir: %w", err)
+	}
+	defer file.Close()
+
+	var metaLabels Labels
+	if err := parseLabelsFromFile(file, &metaLabels); err != nil {
+		return fmt.Errorf("failed to parse meta labels: %w", err)
+	}
+
 	for i, k := range keys {
 		tokens := strings.Split(k, "|")
 		if len(tokens) < 4 {
@@ -245,6 +296,21 @@ func (l *LocalStore) Flush() error {
 		if err != nil {
 			log.Printf("failed to delete log entry %d|%s|%s: %v", lg.Timestamp, lg.Level, lg.Service, err)
 		}
+
+		// Update the meta labels
+		metaLabels.Services[lg.Service]--
+		if metaLabels.Services[lg.Service] <= 0 {
+			delete(metaLabels.Services, lg.Service) // Remove service if count is zero
+		}
+		metaLabels.Levels[lg.Level]--
+		if metaLabels.Levels[lg.Level] <= 0 {
+			delete(metaLabels.Levels, lg.Level) // Remove level if count is zero
+		}
+	}
+
+	// Write the updated meta labels to the file
+	if err := writeLabelsToFile(file, metaLabels, l.dataDir); err != nil {
+		return fmt.Errorf("failed to write meta labels to file: %w", err)
 	}
 
 	l.db.RunGC() // run post flushed gc to make sure deleted refs are rewritten in vlogs
@@ -263,14 +329,29 @@ func (l *LocalStore) Close() error {
 
 // LabelValues returns the unique label values from the local store.
 func (l *LocalStore) LabelValues(labels *Labels) error {
-	uniqueLabels, err := l.db.GetKey(`.*`) // Get all keys, we will filter them later
-	if err != nil {
-		return fmt.Errorf("failed to get unique labels: %w", err)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var metaLabels Labels
+	file, err := getMetaFile(l.dataDir)
+	if err != nil || file == nil {
+		return fmt.Errorf("failed to open meta.json file: %w", os.ErrNotExist)
 	}
 
-	err = parseLabels(uniqueLabels, labels)
+	err = parseLabelsFromFile(file, &metaLabels)
 	if err != nil {
-		return fmt.Errorf("failed to parse labels: %w", err)
+		return fmt.Errorf("failed to parse meta labels: %w", err)
+	}
+
+	for service := range metaLabels.Services {
+		if _, exists := labels.Services[service]; !exists {
+			labels.Services[service] = 0
+		}
+	}
+	for level := range metaLabels.Levels {
+		if _, exists := labels.Levels[level]; !exists {
+			labels.Levels[level] = 0
+		}
 	}
 
 	if l.next != nil {
@@ -280,22 +361,6 @@ func (l *LocalStore) LabelValues(labels *Labels) error {
 				return err
 			}
 		}
-	}
-
-	return nil
-}
-
-func parseLabels(uniqueKeys []string, labels *Labels) error {
-	for _, key := range uniqueKeys {
-		tokens := strings.Split(key, "|")
-		if len(tokens) < 4 {
-			continue // Invalid key format
-		}
-		service := tokens[2]
-		level := tokens[1]
-
-		labels.Services[service] = struct{}{}
-		labels.Levels[level] = struct{}{}
 	}
 
 	return nil
@@ -326,6 +391,67 @@ func EncodeMessage(msg string) string {
 func DecodeMessage(encoded string) (string, error) {
 	data, err := base64.RawURLEncoding.DecodeString(encoded)
 	return string(data), err
+}
+
+func getMetaFile(dir string) (*os.File, error) {
+	file, err := os.OpenFile(fmt.Sprintf("%s/meta.json", dir), os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open meta.json file: %w", err)
+	}
+	return file, nil
+}
+
+func parseLabelsFromFile(file *os.File, labels *Labels) error {
+	labels.Services = make(map[string]int)
+	labels.Levels = make(map[string]int)
+
+	var metaLabels Labels
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&metaLabels); err != nil {
+		// if EOF is reached, it means the file is empty or not yet initialized
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return fmt.Errorf("failed to decode meta labels from file: %w", err)
+	}
+	labels.Services = metaLabels.Services
+	labels.Levels = metaLabels.Levels
+	return nil
+}
+
+func writeLabelsToFile(file *os.File, labels Labels, dir string) error {
+	// peform atomic write to a temp file and then rename it to the original file
+	tempFile, err := os.CreateTemp(dir, "meta_*.json")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file for meta labels: %w", err)
+	}
+	defer tempFile.Close()
+	encoder := json.NewEncoder(tempFile)
+	if err := encoder.Encode(labels); err != nil {
+		return fmt.Errorf("failed to encode meta labels to temp file: %w", err)
+	}
+	if err := tempFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	if err := os.Rename(tempFile.Name(), file.Name()); err != nil {
+		return fmt.Errorf("failed to rename temp file to meta.json: %w", err)
+	}
+
+	dirHandle, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("failed to open directory for sync: %w", err)
+	}
+	defer dirHandle.Close()
+
+	if err := dirHandle.Sync(); err != nil {
+		return fmt.Errorf("failed to sync directory: %w", err)
+	}
+
+	return nil
 }
 
 // Insert -> key -> fmt.Sprintf("%d|%s|%s", entry.Timestamp, entry.Level, entry.Service) TODO think about how to parse message efficiently

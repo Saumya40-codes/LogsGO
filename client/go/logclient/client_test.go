@@ -115,7 +115,6 @@ func TestLabelValues(t *testing.T) {
 	ok := lc.UploadLog(opts)
 
 	testutil.Assert(t, ok, "logs can't be uploaded")
-	time.Sleep(2 * time.Second)
 	// there should be persistance in memory store
 
 	resp, err := http.Get("http://localhost:8080/api/v1/labels")
@@ -328,4 +327,16 @@ func TestLogDataUploadToS3(t *testing.T) {
 	err = decoder.Decode(&queryOutputAfterFlush)
 	testutil.Ok(t, err, "Failed to decode query output from response after flushing")
 	testutil.Assert(t, len(queryOutputAfterFlush) == 0, "Expected no log entry in query output after flushing, got %d", len(queryOutputAfterFlush))
+
+	// check for label values now
+	resp, err = http.Get("http://localhost:8080/api/v1/labels")
+	testutil.Ok(t, err, "Failed to get label values from REST API after flushing")
+	defer resp.Body.Close()
+	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
+	var labels rest.LabelValuesResponse
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&labels)
+	testutil.Ok(t, err, "Failed to decode label values from response after flushing")
+	testutil.Assert(t, len(labels.Services) == 2, "Expected 2 service labels, got %d", len(labels.Services))
+	testutil.Assert(t, len(labels.Levels) == 2, "Expected 2 level labels, got %d", len(labels.Levels))
 }

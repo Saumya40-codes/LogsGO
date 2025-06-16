@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -105,6 +106,23 @@ func (b *BucketStore) InitClient() error {
 			}
 		}
 	}
+
+	// create meta.json file if it doesn't exist
+	if _, err := b.client.StatObject(b.ctx, b.config.Bucket, "meta.json", minio.StatObjectOptions{}); err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			metaData := &Labels{
+				Services: make(map[string]int),
+				Levels:   make(map[string]int),
+			}
+			merr := b.UpdateMetaData(metaData)
+			if merr != nil {
+				return fmt.Errorf("failed to create meta.json in bucket: %w", merr)
+			}
+			log.Println("Created meta.json in bucket")
+		} else {
+			return fmt.Errorf("failed to check meta.json in bucket: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -135,7 +153,16 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	}
 	key := fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, logs[0].Service)
 
+	// get metadata
+	metaData, err := b.GetMetaData()
+	if err != nil {
+		return fmt.Errorf("failed to get metadata: %w", err)
+	}
+
 	for _, log := range logs {
+		metaData.Services[log.Service]++
+		metaData.Levels[log.Level]++
+
 		if log.Timestamp > nextTimeStamp {
 			// our logs are sorted, so we can call it end here for one batch
 			err := b.uploadLogsToStorage(batches, key)
@@ -165,6 +192,11 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 			Count: uint64(entry.value),
 		}
 		batches.Entries = append(batches.Entries, series)
+	}
+
+	// Update metadata
+	if err := b.UpdateMetaData(metaData); err != nil {
+		return fmt.Errorf("failed to update metadata: %w", err)
 	}
 
 	// Upload last batch if exists
@@ -214,15 +246,23 @@ func (b *BucketStore) Flush() error {
 
 // LabelValues returns the unique label values from the local store.
 func (b *BucketStore) LabelValues(labels *Labels) error {
-	var logs []*logapi.Series
-	err := b.fetchLogs(&logs)
-	if err != nil {
-		return err
+	if labels == nil {
+		return fmt.Errorf("labels cannot be nil")
 	}
 
-	for _, log := range logs {
-		labels.Services[log.Entry.Service] = struct{}{}
-		labels.Levels[log.Entry.Level] = struct{}{}
+	metaData, err := b.GetMetaData()
+	if err != nil {
+		return fmt.Errorf("failed to get metadata: %w", err)
+	}
+	for service := range metaData.Services {
+		if _, exists := labels.Services[service]; !exists {
+			labels.Services[service] = 0
+		}
+	}
+	for level := range metaData.Levels {
+		if _, exists := labels.Levels[level]; !exists {
+			labels.Levels[level] = 0
+		}
 	}
 
 	return nil
@@ -325,5 +365,57 @@ func (b *BucketStore) fetchLogs(logs *[]*logapi.Series) error {
 			*logs = append(*logs, batch.Entries...)
 		}
 	}
+	return nil
+}
+
+func (b *BucketStore) GetMetaData() (*Labels, error) {
+	labels := &Labels{
+		Services: make(map[string]int),
+		Levels:   make(map[string]int),
+	}
+
+	metaFile := "meta.json"
+	obj, err := b.client.GetObject(b.ctx, b.config.Bucket, metaFile, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metadata file: %w", err)
+	}
+	defer obj.Close()
+
+	data, err := io.ReadAll(obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read metadata file: %w", err)
+	}
+
+	if err := json.Unmarshal(data, labels); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	}
+
+	return labels, nil
+}
+
+func (b *BucketStore) UpdateMetaData(labels *Labels) error {
+	metaFile := "meta.json"
+	data, err := json.Marshal(labels)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	reader := bytes.NewReader(data)
+	_, err = b.client.PutObject(
+		b.ctx,
+		b.config.Bucket,
+		metaFile,
+		reader,
+		int64(len(data)),
+		minio.PutObjectOptions{
+			ContentType: "application/json",
+		},
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to update metadata in S3 storage: %w", err)
+	}
+
+	log.Println("Updated metadata in S3")
 	return nil
 }

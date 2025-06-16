@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"sync"
@@ -22,6 +23,7 @@ type MemoryStore struct {
 	flushOnExit     bool
 	series          map[LogKey]map[int64]*CounterValue
 	index           *ShardedLogIndex // shared log index
+	meta            Labels           // contains all unique labels for this store, this is used to get unique label values
 }
 
 func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index *ShardedLogIndex) *MemoryStore {
@@ -35,6 +37,10 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index
 		flushOnExit:     flushOnExit,
 		series:          make(map[LogKey]map[int64]*CounterValue),
 		index:           index,
+		meta: Labels{
+			Services: make(map[string]int),
+			Levels:   make(map[string]int),
+		},
 	}
 
 	go mstore.startFlushTimer()
@@ -55,6 +61,8 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]*Co
 		}
 		newCounterVal := shardedSeries.data[key]
 		m.series[key][ts] = newCounterVal
+		m.meta.Services[log.Service]++
+		m.meta.Levels[log.Level]++
 	}
 	return nil
 }
@@ -156,7 +164,6 @@ func (m *MemoryStore) Flush() error {
 	for _, logs := range m.logs {
 		if time.Now().Unix()-logs.Timestamp >= int64(m.maxTimeInMemory.Seconds()) { // TODO: think of some better scheduling, currently there might be case that logs just miss out by few seconds to be flushed and will be in memory for longer time
 			logsToBeFlushed = append(logsToBeFlushed, logs)
-			// Remove the logs that are flushed
 		} else {
 			logsToKeep = append(logsToKeep, logs)
 		}
@@ -177,6 +184,36 @@ func (m *MemoryStore) Flush() error {
 	}
 
 	m.logs = logsToKeep
+
+	for _, log := range logsToBeFlushed {
+
+		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
+		if _, ok := m.series[logKey]; ok {
+			if _, ok := m.series[logKey][log.Timestamp]; ok {
+				delete(m.series[logKey], log.Timestamp)
+				if len(m.series[logKey]) == 0 {
+					delete(m.series, logKey)
+				}
+			} else {
+				return fmt.Errorf("timestamp %v not found in series for logKey %v", log.Timestamp, logKey)
+			}
+		} else {
+			return fmt.Errorf("logKey %v not found in series", logKey)
+		}
+
+		if _, ok := m.meta.Services[log.Service]; ok {
+			m.meta.Services[log.Service]--
+			if m.meta.Services[log.Service] <= 0 {
+				delete(m.meta.Services, log.Service)
+			}
+		}
+		if _, ok := m.meta.Levels[log.Level]; ok {
+			m.meta.Levels[log.Level]--
+			if m.meta.Levels[log.Level] <= 0 {
+				delete(m.meta.Levels, log.Level)
+			}
+		}
+	}
 	return nil
 }
 
@@ -220,10 +257,13 @@ func (m *MemoryStore) startFlushTimer() {
 
 // LabelValues returns the unique label values from the local store. We will have chain of stores, so this will return the unique values from all the stores in the chain.
 func (m *MemoryStore) LabelValues(labels *Labels) error {
-	for _, logs := range m.logs {
-		labels.Services[logs.Service] = struct{}{}
-		labels.Levels[logs.Level] = struct{}{}
-	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	labels.Services = make(map[string]int)
+	labels.Levels = make(map[string]int)
+	maps.Copy(labels.Services, m.meta.Services)
+	maps.Copy(labels.Levels, m.meta.Levels)
 
 	if localStore, ok := (*m.next).(*LocalStore); ok {
 		err := localStore.LabelValues(labels)
