@@ -1,14 +1,19 @@
-import { Input, Text, Box, Button } from "@mantine/core";
+import { Input, Text, Box, Button, TextInput, Tooltip, Center } from "@mantine/core";
+import { DateTimePicker } from '@mantine/dates';
 import styles from "./expressionInput.module.css";
 import { useState, useRef } from "react";
 import type { LogsPayload } from "../../types/types";
 import LogData from "./LogData";
 import SuggestionFilter from "./SuggestionFilter";
+import { IconInfoCircle } from '@tabler/icons-react';
 
 const ExpressionInput = () => {
     const [expression, setExpression] = useState("");
     const inputRef = useRef<HTMLInputElement>(null);
     const [logs, setLogs] = useState<LogsPayload[]>([]);
+    const [startTs, setStartTs] = useState<number>(0);
+    const [endTs, setEndTs] = useState<number>(0);
+    const [resolution, setResolution] = useState<string>("15m");
 
     const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const value = event.target.value;
@@ -23,6 +28,10 @@ const ExpressionInput = () => {
         const baseUrl = "http://localhost:8080/api/v1/query"; // TODO: Make this dynamic
         const params = new URLSearchParams();
         params.set("expression", trimmedExpression)
+        params.set("start", (startTs).toString())
+        params.set("end", (endTs).toString())
+        params.set("resolution", resolution);
+
         const queryUrl = `${baseUrl}?${params.toString()}`;
 
         try {
@@ -45,6 +54,16 @@ const ExpressionInput = () => {
             console.error("Error submitting expression:", error);
         }
     };
+
+    const getUnixTime = (value: string | null) : number => {
+        if (value === null) {
+            return -1
+        }
+
+        const unixTime = Math.floor(new Date(value.replace(" ", "T")).getTime() / 1000);
+        
+        return unixTime
+    }
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
          if (event.key === "Enter") {
@@ -71,6 +90,49 @@ const ExpressionInput = () => {
                             className={styles.expressionInput}
                         />
                         <SuggestionFilter expression={expression} setExpression={setExpression} />
+                        <div className={styles.rangeSelector}>
+                            <DateTimePicker 
+                                withSeconds 
+                                clearable 
+                                label="Pick start time for query evaluation" 
+                                placeholder="Pick start time" 
+                                onChange={(value:string | null)=> {
+                                    if(value === null) return
+                                    setStartTs(getUnixTime(value))
+                                }}
+                            />
+                            <DateTimePicker 
+                                withSeconds 
+                                clearable 
+                                label="Pick end time for query evaluation" 
+                                placeholder="Pick end time" 
+                                onChange={(value:string | null)=> {
+                                    if(value === null) return
+                                    setEndTs(getUnixTime(value))
+                                }}
+                            />
+
+                            <div className={styles.resolutionSelector}>
+                                <TextInput 
+                                    disabled={startTs === 0 || endTs === 0}
+                                    value={resolution}
+                                    onChange={(e) => setResolution(e.target.value)}
+                                    placeholder="15m, 1h, 1d, etc."
+                                    label="Resolution (Step Interval(size) for range query)"
+                                    className={styles.resolutionInput}
+                                />
+                                <Tooltip
+                                    label="For e.g. if its 15m, its shows data at 1am, 1:15am, 1:30am, etc. If its 1h, it shows data at 1am, 2am, 3am, etc."
+                                    position="top-end"
+                                    withArrow
+                                    transitionProps={{ transition: 'pop-bottom-right' }}
+                                >
+                                    <Center>
+                                        <IconInfoCircle size={20} color="gray" />
+                                    </Center>
+                                </Tooltip>
+                            </div>
+                        </div>
                     </div>
                     <Button
                         onClick={handleExpressionSubmit}

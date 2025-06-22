@@ -38,6 +38,13 @@ type GlobalConfig struct { // A central global config which applies irrespective
 	QueryTime      int64
 }
 
+type QueryRequest struct {
+	Query      string
+	StartTs    int64
+	EndTs      int64
+	Resolution int64 // during range queries, this is used to determine the resolution of the query
+}
+
 func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *LogIngestorServer {
 	server := &LogIngestorServer{
 		shutdown: make(chan struct{}),
@@ -137,23 +144,61 @@ func (s *LogIngestorServer) UploadLogs(ctx context.Context, req *logapi.LogBatch
 	return &logapi.UploadResponse{Success: true}, nil
 }
 
-func (s *LogIngestorServer) MakeQuery(query string) ([]store.QueryResponse, error) {
+func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]store.QueryResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.cfg.QueryTime = time.Now().Unix()
 
-	parse, err := logsgoql.ParseQuery(query)
+	parse, err := logsgoql.ParseQuery(req.Query)
 	if err != nil {
 		log.Printf("failed to parse query: %v", err)
 		return nil, err
 	}
 
-	logs, err := s.Store.Query(parse, s.cfg.LookbackPeriod, s.cfg.QueryTime)
-	if err != nil {
-		log.Printf("failed to query logs: %v", err)
-		return nil, err
+	var logs []store.QueryResponse
+
+	if req.StartTs == req.EndTs {
+		// instant i.e. query for a specific time
+		if req.StartTs != 0 {
+			s.cfg.QueryTime = req.StartTs
+		} else {
+			s.cfg.QueryTime = time.Now().Unix()
+		}
+
+		instantLogs, err := s.Store.QueryInstant(parse, s.cfg.LookbackPeriod, s.cfg.QueryTime)
+		if err != nil {
+			log.Printf("failed to query logs: %v", err)
+			return nil, err
+		}
+
+		logs = changeToQueryResponse(instantLogs)
+	} else {
+		logs, err = s.Store.QueryRange(parse, s.cfg.LookbackPeriod, req.StartTs, req.EndTs, req.Resolution)
+		if err != nil {
+			log.Printf("failed to query logs: %v", err)
+			return nil, err
+		}
 	}
 
 	return logs, nil
+}
+
+func changeToQueryResponse(logs []store.InstantQueryResponse) []store.QueryResponse {
+	queryResp := make([]store.QueryResponse, len(logs))
+	for i, log := range logs {
+		queryResp[i] = store.QueryResponse{
+			Level:   log.Level,
+			Service: log.Service,
+			Message: log.Message,
+			Series: []store.Series{
+				{
+					Timestamp: log.TimeStamp,
+					Count:     log.Count,
+				},
+			},
+		}
+	}
+
+	return queryResp
 }

@@ -268,10 +268,10 @@ func (b *BucketStore) LabelValues(labels *Labels) error {
 	return nil
 }
 
-func (b *BucketStore) Query(filter LogFilter, lookback int64, qTime int64) ([]QueryResponse, error) {
+func (b *BucketStore) QueryInstant(filter LogFilter, lookback int64, qTime int64) ([]InstantQueryResponse, error) {
 	var logs []*logapi.Series
 	b.fetchLogs(&logs)
-	var result []QueryResponse
+	var result []InstantQueryResponse
 
 	slices.SortFunc(logs, func(a, b *logapi.Series) int {
 		if a.Entry.Timestamp < b.Entry.Timestamp {
@@ -285,12 +285,12 @@ func (b *BucketStore) Query(filter LogFilter, lookback int64, qTime int64) ([]Qu
 
 	if filter.LHS == nil && filter.RHS == nil {
 		for _, log := range logs {
-			// Skip this log if it falls outside lookback period
+			// break this log if it falls outside lookback period, we sort above so this is fine
 			if qTime-lookback > log.Entry.Timestamp {
-				continue
+				break
 			}
 			if (filter.Level == "" || log.Entry.Level == filter.Level) && (filter.Service == "" || log.Entry.Service == filter.Service) {
-				result = append(result, QueryResponse{
+				result = append(result, InstantQueryResponse{
 					Service:   log.Entry.Service,
 					Level:     log.Entry.Level,
 					Message:   log.Entry.Message,
@@ -302,21 +302,21 @@ func (b *BucketStore) Query(filter LogFilter, lookback int64, qTime int64) ([]Qu
 		}
 	} else {
 		if filter.Or {
-			lhsResults, err := b.Query(*filter.LHS, lookback, qTime)
+			lhsResults, err := b.QueryInstant(*filter.LHS, lookback, qTime)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query LHS: %w", err)
 			}
-			rhsResults, err := b.Query(*filter.RHS, lookback, qTime)
+			rhsResults, err := b.QueryInstant(*filter.RHS, lookback, qTime)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query RHS: %w", err)
 			}
 			result = append(lhsResults, rhsResults...)
 		} else {
-			lhsResults, err := b.Query(*filter.LHS, lookback, qTime)
+			lhsResults, err := b.QueryInstant(*filter.LHS, lookback, qTime)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query LHS: %w", err)
 			}
-			rhsResults, err := b.Query(*filter.RHS, lookback, qTime)
+			rhsResults, err := b.QueryInstant(*filter.RHS, lookback, qTime)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query RHS: %w", err)
 			}
@@ -330,6 +330,10 @@ func (b *BucketStore) Query(filter LogFilter, lookback int64, qTime int64) ([]Qu
 		}
 	}
 	return result, nil
+}
+
+func (b *BucketStore) QueryRange(parse LogFilter, lookback int64, qStart, qEnd, resolution int64) ([]QueryResponse, error) {
+	return nil, nil
 }
 
 func (b *BucketStore) fetchLogs(logs *[]*logapi.Series) error {
