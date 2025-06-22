@@ -64,6 +64,10 @@
 ![Querying Execution](docs/query-execution.png)
 
 ## Current State
-![LogsGo Current State](docs/v0.1.0-status.png)
+![LogsGo Current State](docs/v0.2.0-instant-query.png)
 
 The output you see is an instant query, many of the logs you see were first uploaded to s3 and local storage, the count you see is an aggregation and timestamp is the time at which this was found in latest
+
+![LogsGo Query Range State](docs/v0.2.0-range-query.png)
+
+This starts from start timestamp and moves by 'resolution' amount till end timestamp, the count is the number of logs found in that range, currently if no logs are found in that range, the value at that timestamp isn't shown.
