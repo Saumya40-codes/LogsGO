@@ -29,6 +29,13 @@ var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush m
 	GrpcListenAddr:   ":50051",
 }
 
+// removes s3 related stuff
+func cleanupFactory() {
+	factory.StoreConfig = ""
+	factory.StoreConfigPath = ""
+	factory.MaxRetentionTime = "10d"
+}
+
 type expectedLog struct {
 	Level   string
 	Service string
@@ -239,7 +246,10 @@ func TestLogDataUploadToS3(t *testing.T) {
 	// start minio server and also docker env
 	e, err := e2e.NewDockerEnvironment("uploadS3test")
 	testutil.Ok(t, err)
-	t.Cleanup(e.Close)
+	t.Cleanup(func() {
+		cleanupFactory()
+		e.Close()
+	})
 
 	m1 := e2edb.NewMinio(e, "minio-1", "default")
 	testutil.Ok(t, e2e.StartAndWaitReady(m1))
