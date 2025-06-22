@@ -3,7 +3,7 @@
   <img src="docs/logsGo_logo.png" alt="LogsGo Gopher" width="300"/>
 </p>
 
-**LogsGo** is a standalone, scalable log ingestion and querying service designed for infinite log retention. It features a multi-tiered store architecture, pluggable backends, and a web-based dashboard. Logs are ingested via gRPC and flushed across configured stores based on a customizable time interval.
+**LogsGo** is a standalone, scalable log ingestion and querying service designed for maximum log retention. It features a multi-tiered store architecture, pluggable backends, and a web-based dashboard. Logs are ingested via gRPC and flushed across configured stores based on a customizable time interval.
 
 ---
 
@@ -12,13 +12,16 @@
 -  **Push-based log ingestion** using a lightweight gRPC client.
 -  **Multi-tiered store architecture**:
     - **In-memory store** → for fast ingestion and short-term access.
-    - **Local store** → persistent storage powered by [BadgerDB](https://github.com/dgraph-io/badger).
+    - **Local store** → persistent storage by [BadgerDB](https://github.com/dgraph-io/badger).
     - **Cloud store** → support for S3-compatible services like AWS S3 or MinIO.
 -  **Chained store design**: Each store passes query and flush operations to its `.next` store for transparent fallbacks and deep queries.
 -  **Custom query language**: Enables querying logs with `AND`/`OR` operators. Example:
   
     ```
-    service=apsouth-1&level=warn
+    service=ap-south-1&level=warn
+    ```
+    ```
+    service=ap-south-1|service="us-west-1"
     ```
     
 - **Web dashboard**: Simple UI to query and visualize logs.
@@ -66,8 +69,17 @@
 ## Current State
 ![LogsGo Current State](docs/v0.2.0-instant-query.png)
 
+
 The output you see is an instant query, many of the logs you see were first uploaded to s3 and local storage, the count you see is an aggregation and timestamp is the time at which this was found in latest
 
 ![LogsGo Query Range State](docs/v0.2.0-range-query.png)
 
 This starts from start timestamp and moves by 'resolution' amount till end timestamp, the count is the number of logs found in that range, currently if no logs are found in that range, the value at that timestamp isn't shown.
+
+
+## Running interactive example
+
+You can run an interactive examples from /examples folder, just navigate there and run
+```
+docker compose up
+```
