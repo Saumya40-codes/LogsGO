@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -333,4 +334,75 @@ func TestLogDataUploadToS3(t *testing.T) {
 	testutil.Ok(t, err, "Failed to decode label values from response after flushing")
 	testutil.Assert(t, len(labels.Services) == 2, "Expected 2 service labels, got %d", len(labels.Services))
 	testutil.Assert(t, len(labels.Levels) == 2, "Expected 2 level labels, got %d", len(labels.Levels))
+}
+
+func TestRangeQueries(t *testing.T) {
+	factory.DataDir = t.TempDir()
+	ctx := t.Context()
+	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
+	go rest.StartServer(ctx, serv, &factory)
+
+	time.Sleep(2 * time.Second) // wait for servers
+	startTs := time.Now()
+
+	opts := &Opts{
+		Message:   "Time duration execeeded",
+		Level:     "warn",
+		Service:   "ap-south1",
+		TimeStamp: startTs.Unix(),
+	}
+
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	testutil.Ok(t, err)
+
+	ok := lc.UploadLog(opts)
+	testutil.Assert(t, ok, "logs can't be uploaded")
+
+	// add logs +15min after startTs
+	newOpts := opts
+	newOpts.TimeStamp = startTs.Add(15 * time.Minute).Unix()
+	ok = lc.UploadLog(newOpts)
+	testutil.Assert(t, ok, "logs can't be uploaded")
+
+	// add logs +30min after startTs
+	newOpts.TimeStamp = startTs.Add(30 * time.Minute).Unix()
+	ok = lc.UploadLog(newOpts)
+	testutil.Assert(t, ok, "logs can't be uploaded")
+
+	// perform range query for 15min interval
+	queryStart := startTs.Unix()
+	queryEnd := startTs.Add(30 * time.Minute).Unix()
+	resolution := "15m"
+
+	base := "http://localhost:8080/api/v1/query"
+	params := url.Values{}
+	params.Set("expression", "level=warn")
+	params.Set("start", strconv.FormatInt(queryStart, 10))
+	params.Set("end", strconv.FormatInt(queryEnd, 10))
+	params.Set("resolution", resolution)
+	fullURL := base + "?" + params.Encode()
+	resp, err := http.Get(fullURL)
+	testutil.Ok(t, err, "Failed to get query output from REST API after flushing")
+	defer resp.Body.Close()
+	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
+
+	var queryOutput []store.QueryResponse
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&queryOutput)
+
+	testutil.Ok(t, err, "Failed to decode query output from response after flushing")
+	testutil.Assert(t, len(queryOutput) == 1, "Expected 1 log entry in query output after flushing, got %d", len(queryOutput))
+	testutil.Assert(t, queryOutput[0].Level == "warn", "Expected log level 'warn', got '%s'", queryOutput[0].Level)
+	testutil.Assert(t, queryOutput[0].Service == "ap-south1", "Expected log service 'ap-south1', got '%s'", queryOutput[0].Service)
+	testutil.Assert(t, queryOutput[0].Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", queryOutput[0].Message)
+
+	testutil.Assert(t, queryOutput[0].Series[0].Timestamp == queryStart, "Expected log timestamp to be %d, got %d", queryStart, queryOutput[0].Series[0].Timestamp)
+	testutil.Assert(t, queryOutput[0].Series[0].Count == 1, "Expected log counter to have value 1, got %d", queryOutput[0].Series[0].Count)
+
+	testutil.Assert(t, queryOutput[0].Series[1].Timestamp == queryStart+15*60, "Expected log timestamp to be %d, got %d", queryStart+15*60, queryOutput[0].Series[1].Timestamp)
+	testutil.Assert(t, queryOutput[0].Series[1].Count == 2, "Expected log counter to have value 2, got %d", queryOutput[0].Series[1].Count)
+
+	testutil.Assert(t, queryOutput[0].Series[2].Timestamp == queryStart+30*60, "Expected log timestamp to be %d, got %d", queryStart+30*60, queryOutput[0].Series[2].Timestamp)
+	testutil.Assert(t, queryOutput[0].Series[2].Count == 3, "Expected log counter to have value 3, got %d", queryOutput[0].Series[2].Count)
 }

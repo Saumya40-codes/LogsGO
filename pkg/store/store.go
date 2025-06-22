@@ -12,7 +12,7 @@ import (
 type Store interface {
 	QueryInstant(filter LogFilter, lookback int64, qTime int64) ([]InstantQueryResponse, error)          // Returns logs matching the filter
 	QueryRange(parse LogFilter, lookback int64, qStart, qEnd, resolution int64) ([]QueryResponse, error) // Returns logs matching the filter in a range
-	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]*CounterValue) error
+	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error
 	Flush() error
 	Close() error
 	LabelValues(labels *Labels) error // Returns all the unique label values for services and levels

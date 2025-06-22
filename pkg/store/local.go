@@ -61,7 +61,7 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 	return lstore, nil
 }
 
-func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]*CounterValue) error {
+func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -220,7 +220,7 @@ func (l *LocalStore) Flush() error {
 	defer l.mu.Unlock()
 
 	var logs []*logapi.LogEntry
-	series := make(map[LogKey]map[int64]*CounterValue)
+	series := make(map[LogKey]map[int64]CounterValue)
 
 	keys, vals, err := l.db.Get(".*")
 	if err != nil {
@@ -266,10 +266,10 @@ func (l *LocalStore) Flush() error {
 
 		logkey := LogKey{Service: service, Level: level, Message: message}
 		if series[logkey] == nil {
-			series[logkey] = make(map[int64]*CounterValue)
+			series[logkey] = make(map[int64]CounterValue)
 		}
-		if series[logkey][int64(timestamp)] == nil {
-			series[logkey][int64(timestamp)] = &CounterValue{
+		if series[logkey][int64(timestamp)] == (CounterValue{}) {
+			series[logkey][int64(timestamp)] = CounterValue{
 				value: uint64(countValue),
 			}
 		}

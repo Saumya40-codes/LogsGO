@@ -2,9 +2,13 @@ export interface LogsPayload {
     Service: string;
     Level: string;
     Message: string;
-    TimeStamp: string[];
-    Count: number[];
+    Series: Series[];
 }
+
+type Series = {
+    Count: number;
+    Timestamp: string;
+};
 
 export interface LabelValuesProps {
     Services: string[];

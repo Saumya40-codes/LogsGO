@@ -15,11 +15,10 @@ const LogData = ({ logs }: { logs: LogsPayload[] }) => {
         <Table.Td>{log.Level}</Table.Td>
         <Table.Td>{log.Message}</Table.Td>
         <Table.Td>
-            {log.Count.map((count, idx) => (
-                <span key={idx}>
-                    {count} : ({log.TimeStamp[idx]})
-                    {idx < log.Count.length - 1 ? '\n' : ''}
-                </span>
+            {log.Series.map((series, idx) => (
+                <div key={idx}>
+                    {series.Count} : {series.Timestamp}
+                </div>
             ))}
         </Table.Td>
         </Table.Tr>

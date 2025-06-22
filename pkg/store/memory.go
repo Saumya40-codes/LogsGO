@@ -21,7 +21,7 @@ type MemoryStore struct {
 	lastFlushTime   int64         // Timestamp of the last flush operation
 	shutdown        chan struct{} // Channel to signal shutdown of the store
 	flushOnExit     bool
-	series          map[LogKey]map[int64]*CounterValue
+	series          map[LogKey]map[int64]CounterValue
 	index           *ShardedLogIndex // shared log index
 	meta            Labels           // contains all unique labels for this store, this is used to get unique label values
 }
@@ -35,7 +35,7 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index
 		lastFlushTime:   0,
 		shutdown:        make(chan struct{}),
 		flushOnExit:     flushOnExit,
-		series:          make(map[LogKey]map[int64]*CounterValue),
+		series:          make(map[LogKey]map[int64]CounterValue),
 		index:           index,
 		meta: Labels{
 			Services: make(map[string]int),
@@ -47,7 +47,7 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index
 	return mstore
 }
 
-func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]*CounterValue) error {
+func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]CounterValue) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logs = append(m.logs, logs...)
@@ -57,10 +57,10 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]*Co
 		m.index.Inc(key)
 		shardedSeries := m.index.getShard(key)
 		if m.series[key] == nil {
-			m.series[key] = make(map[int64]*CounterValue)
+			m.series[key] = make(map[int64]CounterValue)
 		}
 		newCounterVal := shardedSeries.data[key]
-		m.series[key][ts] = newCounterVal
+		m.series[key][ts] = *newCounterVal
 		m.meta.Services[log.Service]++
 		m.meta.Levels[log.Level]++
 	}
@@ -86,6 +86,11 @@ func (m *MemoryStore) QueryInstant(parse LogFilter, lookback int64, qTime int64)
 			if qTime-lookback > logs.Timestamp {
 				break
 			}
+
+			if logs.Timestamp > qTime {
+				continue // Skip if timestamp is in the future
+			}
+
 			if parse.Service != "" && logs.Service != parse.Service {
 				continue // Skip if service does not match
 			}

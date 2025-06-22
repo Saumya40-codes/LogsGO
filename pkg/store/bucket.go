@@ -126,7 +126,7 @@ func (b *BucketStore) InitClient() error {
 	return nil
 }
 
-func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]*CounterValue) error {
+func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error {
 	// now here have a dedicated file kinda thing for each entry won't make sense.
 	// we will create a chunks of 2h worth of data
 

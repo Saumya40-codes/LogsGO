@@ -2,6 +2,7 @@ package rest
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -25,24 +26,30 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 
 	allowedOrigins := []string{"http://localhost:5173"}
 
-	addr := strings.Split(cfg.WebListenAddr, ":")
-	var host, port string
-	if len(addr) == 2 {
-		host = addr[0]
-		port = addr[1]
-	} else if len(addr) == 1 {
-		host = addr[0]
-		port = "80"
+	var origin string
+	if !strings.HasPrefix(cfg.WebListenAddr, "http://") && !strings.HasPrefix(cfg.WebListenAddr, "https://") {
+		addr := strings.Split(cfg.WebListenAddr, ":")
+		var host, port string
+		if len(addr) == 2 {
+			host = addr[0]
+			port = addr[1]
+		} else if len(addr) == 1 {
+			host = addr[0]
+			port = "80"
+		} else {
+			log.Printf("unexpected WebListenAddr format: %s", cfg.WebListenAddr)
+		}
+
+		if host == "0.0.0.0" || host == "" {
+			host = "localhost"
+		}
+
+		origin = "http://" + host + ":" + port
 	} else {
-		log.Printf("unexpected WebListenAddr format: %s", cfg.WebListenAddr)
+		origin = cfg.WebListenAddr
 	}
-
-	if host == "0.0.0.0" || host == "" {
-		host = "localhost"
-	}
-
-	origin := "http://" + host + ":" + port
 	allowedOrigins = append(allowedOrigins, origin)
+	fmt.Println("Allowed origins:", allowedOrigins)
 
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     allowedOrigins,
