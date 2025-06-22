@@ -20,8 +20,8 @@ services:
       - --web-listen-addr=0.0.0.0:19091
       - --grpc-listen-addr=0.0.0.0:50051
       - --http-listen-addr=0.0.0.0:8080  # As this is a demo, we can do expose it to all interfaces :)
-      - --max-time-in-mem=5m # Again, demo we have few logs so this is okkk
-      - --max-retention-time=5m # We'll have nearly all logs in s3 within 10 min, again as a part of this demo :D
+      - --max-time-in-mem=4m # Again, demo we have few logs so this is okkk
+      - --max-retention-time=8m # We'll have nearly all logs in s3 within 10 min, again as a part of this demo :D
 
   minio:
     image: minio/minio:latest
