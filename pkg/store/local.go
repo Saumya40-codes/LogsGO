@@ -61,7 +61,7 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 	return lstore, nil
 }
 
-func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]*CounterValue) error {
+func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -112,8 +112,8 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 	return nil
 }
 
-func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]QueryResponse, error) {
-	var results []QueryResponse
+func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) ([]InstantQueryResponse, error) {
+	var results []InstantQueryResponse
 
 	if parse.LHS == nil && parse.RHS == nil {
 		var key string
@@ -160,7 +160,7 @@ func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]Quer
 
 			if ((parse.Level != "" && level == parse.Level) || (parse.Service != "" && service == parse.Service)) && (timestamp > nearestT) {
 				nearestT = timestamp
-				results = append(results, QueryResponse{
+				results = append(results, InstantQueryResponse{
 					TimeStamp: int64(timestamp),
 					Level:     level,
 					Service:   service,
@@ -170,21 +170,21 @@ func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]Quer
 			}
 		}
 	} else if parse.Or {
-		lhsResults, err := l.Query(*parse.LHS, lookback, qTime)
+		lhsResults, err := l.QueryInstant(*parse.LHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query LHS: %w", err)
 		}
-		rhsResults, err := l.Query(*parse.RHS, lookback, qTime)
+		rhsResults, err := l.QueryInstant(*parse.RHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
 		results = append(lhsResults, rhsResults...)
 	} else {
-		lhsResults, err := l.Query(*parse.LHS, lookback, qTime)
+		lhsResults, err := l.QueryInstant(*parse.LHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query LHS: %w", err)
 		}
-		rhsResults, err := l.Query(*parse.RHS, lookback, qTime)
+		rhsResults, err := l.QueryInstant(*parse.RHS, lookback, qTime)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
@@ -200,7 +200,7 @@ func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]Quer
 
 	if l.next != nil {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			res, err := bucketStore.Query(parse, lookback, qTime)
+			res, err := bucketStore.QueryInstant(parse, lookback, qTime)
 			if err != nil {
 				return nil, err
 			}
@@ -211,12 +211,16 @@ func (l *LocalStore) Query(parse LogFilter, lookback int64, qTime int64) ([]Quer
 	return results, nil
 }
 
+func (l *LocalStore) QueryRange(parse LogFilter, lookback int64, qStart, qEnd, resolution int64) ([]QueryResponse, error) {
+	return nil, nil
+}
+
 func (l *LocalStore) Flush() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	var logs []*logapi.LogEntry
-	series := make(map[LogKey]map[int64]*CounterValue)
+	series := make(map[LogKey]map[int64]CounterValue)
 
 	keys, vals, err := l.db.Get(".*")
 	if err != nil {
@@ -262,10 +266,10 @@ func (l *LocalStore) Flush() error {
 
 		logkey := LogKey{Service: service, Level: level, Message: message}
 		if series[logkey] == nil {
-			series[logkey] = make(map[int64]*CounterValue)
+			series[logkey] = make(map[int64]CounterValue)
 		}
-		if series[logkey][int64(timestamp)] == nil {
-			series[logkey][int64(timestamp)] = &CounterValue{
+		if series[logkey][int64(timestamp)] == (CounterValue{}) {
+			series[logkey][int64(timestamp)] = CounterValue{
 				value: uint64(countValue),
 			}
 		}
@@ -459,3 +463,5 @@ func writeLabelsToFile(file *os.File, labels Labels, dir string) error {
 // Flush each upstream store flushes to downstream after specified time interval, i.e. memory.Flush should flush to local.Flush, local.Flush should flush to remote.Flush
 // Flush in itself should call Insert for each log entry, so that we can persist it to the db.
 // Close close the db
+
+// for graph view (a range query) for a query, a query should return a list of logs with timestamp, level, service, message and count

@@ -2,8 +2,10 @@ package rest
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
@@ -24,24 +26,30 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 
 	allowedOrigins := []string{"http://localhost:5173"}
 
-	addr := strings.Split(cfg.WebListenAddr, ":")
-	var host, port string
-	if len(addr) == 2 {
-		host = addr[0]
-		port = addr[1]
-	} else if len(addr) == 1 {
-		host = addr[0]
-		port = "80"
+	var origin string
+	if !strings.HasPrefix(cfg.WebListenAddr, "http://") && !strings.HasPrefix(cfg.WebListenAddr, "https://") {
+		addr := strings.Split(cfg.WebListenAddr, ":")
+		var host, port string
+		if len(addr) == 2 {
+			host = addr[0]
+			port = addr[1]
+		} else if len(addr) == 1 {
+			host = addr[0]
+			port = "80"
+		} else {
+			log.Printf("unexpected WebListenAddr format: %s", cfg.WebListenAddr)
+		}
+
+		if host == "0.0.0.0" || host == "" {
+			host = "localhost"
+		}
+
+		origin = "http://" + host + ":" + port
 	} else {
-		log.Printf("unexpected WebListenAddr format: %s", cfg.WebListenAddr)
+		origin = cfg.WebListenAddr
 	}
-
-	if host == "0.0.0.0" || host == "" {
-		host = "localhost"
-	}
-
-	origin := "http://" + host + ":" + port
 	allowedOrigins = append(allowedOrigins, origin)
+	fmt.Println("Allowed origins:", allowedOrigins)
 
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     allowedOrigins,
@@ -55,7 +63,32 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 	{
 		api.GET("/query", func(g *gin.Context) {
 			expr := g.Query("expression")
-			res, err := logServer.MakeQuery(expr)
+			startTs := g.Query("start")
+			endTs := g.Query("end")
+			resolution := g.Query("resolution")
+
+			if !pkg.ValidateTimeDurations(resolution) {
+				log.Printf("Invalid resolution format: %s", resolution)
+				g.JSON(http.StatusBadRequest, gin.H{"error": "Invalid resolution format"})
+				return
+			}
+
+			qReq := ingestion.QueryRequest{
+				Query:      expr,
+				Resolution: int64(pkg.GetTimeDuration(resolution).Seconds()),
+			}
+
+			sTs, eTs, err := parserTimestamp(startTs, endTs)
+			if err != nil {
+				log.Printf("Error parsing timestamps: %v", err)
+				g.JSON(http.StatusBadRequest, gin.H{"error": "Invalid timestamp format"})
+				return
+			}
+
+			qReq.StartTs = sTs
+			qReq.EndTs = eTs
+
+			res, err := logServer.MakeQuery(qReq)
 			if err != nil {
 				log.Printf("Error processing query: %v", err)
 				g.JSON(http.StatusBadRequest, gin.H{"error": "Invalid query expression"})
@@ -146,4 +179,18 @@ func ConvertToResponse(labels store.Labels) LabelValuesResponse {
 	}
 
 	return resp
+}
+
+func parserTimestamp(startTs, endTs string) (int64, int64, error) {
+	start, err := strconv.ParseInt(startTs, 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	end, err := strconv.ParseInt(endTs, 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return start, end, nil
 }

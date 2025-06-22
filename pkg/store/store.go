@@ -10,8 +10,9 @@ import (
 
 // Store interfaces defines the methods that any store implementation should provide.
 type Store interface {
-	Query(filter LogFilter, lookback int64, qTime int64) ([]QueryResponse, error) // Returns logs matching the filter
-	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]*CounterValue) error
+	QueryInstant(filter LogFilter, lookback int64, qTime int64) ([]InstantQueryResponse, error)          // Returns logs matching the filter
+	QueryRange(parse LogFilter, lookback int64, qStart, qEnd, resolution int64) ([]QueryResponse, error) // Returns logs matching the filter in a range
+	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error
 	Flush() error
 	Close() error
 	LabelValues(labels *Labels) error // Returns all the unique label values for services and levels
@@ -24,6 +25,18 @@ type Labels struct {
 	// TODO: Add support for custom labels in the future
 }
 
+type Series struct {
+	Timestamp int64
+	Count     uint64
+}
+
+type QueryResponse struct {
+	Level   string
+	Service string
+	Message string
+	Series  []Series
+}
+
 type LogFilter struct {
 	Level   string
 	Service string
@@ -32,12 +45,12 @@ type LogFilter struct {
 	LHS     *LogFilter
 }
 
-type QueryResponse struct {
+type InstantQueryResponse struct {
 	Level     string
 	Service   string
-	Message   string
 	TimeStamp int64
 	Count     uint64
+	Message   string
 }
 
 // key used for mappings

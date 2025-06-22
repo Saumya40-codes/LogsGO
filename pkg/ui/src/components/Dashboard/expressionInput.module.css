@@ -30,3 +30,18 @@
   display: flex;
   flex-direction: column;
 }
+
+.rangeSelector {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 100px;
+  margin-top: 20px;
+}
+
+.resolutionSelector {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+}
