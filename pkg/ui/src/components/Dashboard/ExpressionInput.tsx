@@ -97,7 +97,10 @@ const ExpressionInput = () => {
                                 label="Pick start time for query evaluation" 
                                 placeholder="Pick start time" 
                                 onChange={(value:string | null)=> {
-                                    if(value === null) return
+                                    if(value === null) {
+                                        setStartTs(0)
+                                        return
+                                    }
                                     setStartTs(getUnixTime(value))
                                 }}
                             />
@@ -107,7 +110,10 @@ const ExpressionInput = () => {
                                 label="Pick end time for query evaluation" 
                                 placeholder="Pick end time" 
                                 onChange={(value:string | null)=> {
-                                    if(value === null) return
+                                    if(value === null) {
+                                        setEndTs(0)
+                                        return
+                                    }
                                     setEndTs(getUnixTime(value))
                                 }}
                             />
