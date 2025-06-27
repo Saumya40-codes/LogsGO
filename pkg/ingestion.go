@@ -21,6 +21,8 @@ type IngestionFactory struct {
 	LookbackPeriod          string
 	MemStoreFlushDuration   string
 	LocalStoreFlushDuration string
+	PublicKeyPath           string
+	TLSConfigPath           string
 }
 
 func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *IngestionFactory {

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Saumya40-codes/LogsGO/api/auth"
 	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
@@ -27,6 +28,14 @@ var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush m
 	WebListenAddr:    "*",
 	LookbackPeriod:   "15m",
 	GrpcListenAddr:   ":50051",
+}
+
+// override auth config for tests if needed
+var authConfig = auth.AuthConfig{
+	PublicKeyPath: "",
+	PublicKey:     nil,
+	TLSConfigPath: "",
+	TLSCfg:        nil,
 }
 
 // removes s3 related stuff
@@ -73,7 +82,7 @@ func TestGRPCConn(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -96,8 +105,8 @@ func TestDirCreated(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
-	go rest.StartServer(ctx, serv, &factory)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -138,8 +147,8 @@ func TestLabelValues(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
-	go rest.StartServer(ctx, serv, &factory)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -204,8 +213,8 @@ func TestQueryOutput(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
-	go rest.StartServer(ctx, serv, &factory)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	time.Sleep(2 * time.Second) // wait for servers
 
@@ -272,8 +281,8 @@ func TestLogDataUploadToS3(t *testing.T) {
 
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
-	go rest.StartServer(ctx, serv, &factory)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -350,8 +359,8 @@ func TestRangeQueries(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
-	go rest.StartServer(ctx, serv, &factory)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	time.Sleep(2 * time.Second) // wait for servers
 	startTs := time.Now()

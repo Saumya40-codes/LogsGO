@@ -9,6 +9,7 @@ require (
 	github.com/efficientgo/e2e v0.14.0
 	github.com/gin-contrib/cors v1.7.5
 	github.com/gin-gonic/gin v1.10.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/go-cmp v0.7.0
 	github.com/minio/minio-go/v7 v7.0.92
 	github.com/spf13/cobra v1.9.1

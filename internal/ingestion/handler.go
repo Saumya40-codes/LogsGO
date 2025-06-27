@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Saumya40-codes/LogsGO/api/auth"
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
@@ -92,14 +93,31 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	return server
 }
 
-func StartServer(ctx context.Context, serv *LogIngestorServer, addr string) {
+func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, authConfig auth.AuthConfig) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen on port 50051: %v", err)
 	}
 	defer lis.Close()
 
-	s := grpc.NewServer()
+	var s *grpc.Server
+	var grpcOpts []grpc.ServerOption
+
+	if authConfig.PublicKey != nil && authConfig.PublicKeyPath != "" {
+		grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(auth.JwtInterceptor(authConfig.PublicKey)))
+	}
+
+	if authConfig.TLSConfigPath != "" && authConfig.TLSCfg != nil {
+		creds, err := auth.GetTLSCredentials(authConfig.TLSCfg)
+		if err != nil {
+			log.Fatalf("failed to get TLS credentials: %v", err)
+		}
+
+		grpcOpts = append(grpcOpts, creds)
+	}
+
+	s = grpc.NewServer(grpcOpts...)
+
 	logapi.RegisterLogIngestorServer(s, serv)
 
 	// Run server in goroutine
