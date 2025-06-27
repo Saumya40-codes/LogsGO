@@ -93,7 +93,7 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	return server
 }
 
-func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, insecure bool, publicKeyPath string) {
+func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, authConfig auth.AuthConfig) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen on port 50051: %v", err)
@@ -101,19 +101,35 @@ func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, inse
 	defer lis.Close()
 
 	var s *grpc.Server
+	var grpcOpts []grpc.ServerOption
 	// TODO: handle insecure logic
-	if publicKeyPath != "" {
+	if authConfig.PublicKeyPath != "" {
 		// If public key is provided, use JWT authentication
-		pubKey, err := auth.ParsePublicKeyFile(publicKeyPath)
+		pubKey, err := auth.ParsePublicKeyFile(authConfig.PublicKeyPath)
 		if err != nil {
 			log.Fatalf("failed to parse public key: %v", err)
 		}
 
-		s = grpc.NewServer(grpc.UnaryInterceptor(auth.JwtInterceptor(pubKey)))
-	} else {
-		// If no public key is provided, run without authentication
-		s = grpc.NewServer()
+		grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(auth.JwtInterceptor(pubKey)))
 	}
+
+	if authConfig.TLSConfigPath != "" || !authConfig.Insecure {
+		// If TLS config is provided, use TLS
+		tlsConfig, err := auth.ParseTLSConfig(authConfig.TLSConfigPath)
+		if err != nil {
+			log.Fatalf("failed to parse TLS config: %v", err)
+		}
+
+		creds, err := auth.GetTLSCredentials(tlsConfig)
+		if err != nil {
+			log.Fatalf("failed to get TLS credentials: %v", err)
+		}
+
+		grpcOpts = append(grpcOpts, creds)
+	}
+
+	s = grpc.NewServer(grpcOpts...)
+
 	logapi.RegisterLogIngestorServer(s, serv)
 
 	// Run server in goroutine

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"unicode"
 
+	"github.com/Saumya40-codes/LogsGO/api/auth"
 	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
@@ -35,16 +36,29 @@ var rootCmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
+		// recover from panic
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("LogsGo service panicked: %v", r)
+				cancel()
+			}
+		}()
+
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 
 		wg := &sync.WaitGroup{}
 		serv := ingestion.NewLogIngestorServer(ctx, cfg)
+		authConfig := auth.AuthConfig{
+			PublicKeyPath: cfg.PublicKeyPath,
+			TLSConfigPath: cfg.TLSConfigPath,
+			Insecure:      cfg.Insecure,
+		}
 
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			ingestion.StartServer(ctx, serv, cfg.GrpcListenAddr, cfg.Insecure, cfg.PublicKeyPath)
+			ingestion.StartServer(ctx, serv, cfg.GrpcListenAddr, authConfig)
 		}()
 
 		go func() {
@@ -78,8 +92,9 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.StoreConfig, "store-config", "", "s3 compatible store configuration, can't be used with --store-config-path flag")
 	rootCmd.Flags().StringVar(&cfg.WebListenAddr, "web-listen-addr", "http://localhost:19091", "LogsGo web client address")
 	rootCmd.Flags().StringVar(&cfg.LookbackPeriod, "lookback-period", "15m", "For instant queries (querying at current time) how much to look back in time from current time to fetch logs")
-	rootCmd.Flags().BoolVar(&cfg.Insecure, "insecure", false, "If set, will not use TLS for gRPC and HTTP servers")
+	rootCmd.Flags().BoolVar(&cfg.Insecure, "insecure", true, "If un-set, will use TLS for gRPC and HTTP servers")
 	rootCmd.Flags().StringVar(&cfg.PublicKeyPath, "public-key-path", "", "Path to RSA public key for JWT authentication, if set will enable JWT authentication for gRPC and HTTP servers")
+	rootCmd.Flags().StringVar(&cfg.TLSConfigPath, "tls-config-path", "", "Path to TLS configuration file for gRPC and HTTP servers, if set will enable TLS, goes well with --insecure flag")
 	rootCmd.Flags().SortFlags = true
 
 	if err := rootCmd.Execute(); err != nil {

@@ -10,9 +10,22 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"gopkg.in/yaml.v2"
 )
+
+type TLSConfig struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+}
+
+type AuthConfig struct {
+	PublicKeyPath string
+	TLSConfigPath string
+	Insecure      bool
+}
 
 func JwtInterceptor(pubKey *rsa.PublicKey) grpc.UnaryServerInterceptor {
 	return func(
@@ -81,4 +94,34 @@ func ParsePublicKeyFile(path string) (*rsa.PublicKey, error) {
 	}
 
 	return pubKey, nil
+}
+
+func ParseTLSConfig(path string) (*TLSConfig, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("failed to open TLS config file: " + err.Error())
+	}
+	defer file.Close()
+
+	tlsConfig := &TLSConfig{}
+	if err := yaml.NewDecoder(file).Decode(tlsConfig); err != nil {
+		return nil, errors.New("failed to decode TLS config: " + err.Error())
+	}
+	if tlsConfig.CertFile == "" || tlsConfig.KeyFile == "" {
+		return nil, errors.New("TLS config must contain cert_file and key_file")
+	}
+	return tlsConfig, nil
+}
+
+func GetTLSCredentials(tlsConfig *TLSConfig) (grpc.ServerOption, error) {
+	if tlsConfig == nil {
+		return nil, errors.New("TLS config is nil")
+	}
+
+	creds, err := credentials.NewServerTLSFromFile("certs/server.crt", "certs/server.key")
+	if err != nil {
+		return nil, errors.New("failed to create TLS credentials: " + err.Error())
+	}
+
+	return grpc.Creds(creds), nil
 }

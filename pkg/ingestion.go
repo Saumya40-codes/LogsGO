@@ -23,6 +23,7 @@ type IngestionFactory struct {
 	LocalStoreFlushDuration string
 	Insecure                bool
 	PublicKeyPath           string
+	TLSConfigPath           string
 }
 
 func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *IngestionFactory {
