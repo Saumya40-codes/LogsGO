@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
@@ -62,6 +63,17 @@ func JwtInterceptor(pubKey *rsa.PublicKey) grpc.UnaryServerInterceptor {
 
 		if !token.Valid {
 			return nil, ReturnUnauthenticatedError("token is not valid")
+		}
+
+		// check expiry date
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			return nil, ReturnUnauthenticatedError("invalid token claims")
+		}
+
+		exp, ok := claims["exp"].(float64)
+		if !ok || int64(exp) < time.Now().Unix() {
+			return nil, ReturnUnauthenticatedError("token has expired")
 		}
 
 		return handler(ctx, req)
