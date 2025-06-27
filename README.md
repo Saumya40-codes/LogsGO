@@ -7,6 +7,8 @@
 
 ---
 
+> Checkout [/docs](https://github.com/Saumya40-codes/LogsGO/tree/main/docs) to see the arch design, auth flows and several other brainstorming made for this project :)
+
 ## Features
 
 -  **Push-based log ingestion** using a lightweight gRPC client.
