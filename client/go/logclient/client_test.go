@@ -73,7 +73,7 @@ func TestGRPCConn(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, false, "")
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -96,7 +96,7 @@ func TestDirCreated(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, false, "")
 	go rest.StartServer(ctx, serv, &factory)
 
 	// waiting for server to start
@@ -138,7 +138,7 @@ func TestLabelValues(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, false, "")
 	go rest.StartServer(ctx, serv, &factory)
 
 	// waiting for server to start
@@ -204,7 +204,7 @@ func TestQueryOutput(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, false, "")
 	go rest.StartServer(ctx, serv, &factory)
 
 	time.Sleep(2 * time.Second) // wait for servers
@@ -272,7 +272,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, false, "")
 	go rest.StartServer(ctx, serv, &factory)
 
 	// waiting for server to start
@@ -350,7 +350,7 @@ func TestRangeQueries(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, false, "")
 	go rest.StartServer(ctx, serv, &factory)
 
 	time.Sleep(2 * time.Second) // wait for servers

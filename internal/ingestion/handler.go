@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Saumya40-codes/LogsGO/api/auth"
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
@@ -92,14 +93,27 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	return server
 }
 
-func StartServer(ctx context.Context, serv *LogIngestorServer, addr string) {
+func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, insecure bool, publicKeyPath string) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen on port 50051: %v", err)
 	}
 	defer lis.Close()
 
-	s := grpc.NewServer()
+	var s *grpc.Server
+	// TODO: handle insecure logic
+	if publicKeyPath != "" {
+		// If public key is provided, use JWT authentication
+		pubKey, err := auth.ParsePublicKeyFile(publicKeyPath)
+		if err != nil {
+			log.Fatalf("failed to parse public key: %v", err)
+		}
+
+		s = grpc.NewServer(grpc.UnaryInterceptor(auth.JwtInterceptor(pubKey)))
+	} else {
+		// If no public key is provided, run without authentication
+		s = grpc.NewServer()
+	}
 	logapi.RegisterLogIngestorServer(s, serv)
 
 	// Run server in goroutine
