@@ -21,7 +21,6 @@ type IngestionFactory struct {
 	LookbackPeriod          string
 	MemStoreFlushDuration   string
 	LocalStoreFlushDuration string
-	Insecure                bool
 	PublicKeyPath           string
 	TLSConfigPath           string
 }

@@ -102,25 +102,13 @@ func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, auth
 
 	var s *grpc.Server
 	var grpcOpts []grpc.ServerOption
-	// TODO: handle insecure logic
-	if authConfig.PublicKeyPath != "" {
-		// If public key is provided, use JWT authentication
-		pubKey, err := auth.ParsePublicKeyFile(authConfig.PublicKeyPath)
-		if err != nil {
-			log.Fatalf("failed to parse public key: %v", err)
-		}
 
-		grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(auth.JwtInterceptor(pubKey)))
+	if authConfig.PublicKey != nil && authConfig.PublicKeyPath != "" {
+		grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(auth.JwtInterceptor(authConfig.PublicKey)))
 	}
 
-	if authConfig.TLSConfigPath != "" || !authConfig.Insecure {
-		// If TLS config is provided, use TLS
-		tlsConfig, err := auth.ParseTLSConfig(authConfig.TLSConfigPath)
-		if err != nil {
-			log.Fatalf("failed to parse TLS config: %v", err)
-		}
-
-		creds, err := auth.GetTLSCredentials(tlsConfig)
+	if authConfig.TLSConfigPath != "" && authConfig.TLSCfg != nil {
+		creds, err := auth.GetTLSCredentials(authConfig.TLSCfg)
 		if err != nil {
 			log.Fatalf("failed to get TLS credentials: %v", err)
 		}

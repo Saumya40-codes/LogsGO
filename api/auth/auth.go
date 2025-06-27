@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rsa"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -24,8 +26,9 @@ type TLSConfig struct {
 
 type AuthConfig struct {
 	PublicKeyPath string
+	PublicKey     *rsa.PublicKey
 	TLSConfigPath string
-	Insecure      bool
+	TLSCfg        *TLSConfig
 }
 
 func JwtInterceptor(pubKey *rsa.PublicKey) grpc.UnaryServerInterceptor {
@@ -50,33 +53,39 @@ func JwtInterceptor(pubKey *rsa.PublicKey) grpc.UnaryServerInterceptor {
 			return nil, ReturnUnauthenticatedError("missing token")
 		}
 
-		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, ReturnUnauthenticatedError("unexpected signing method")
-			}
-			return pubKey, nil
-		})
-
+		token, err := parseJwtToken(tokenStr, pubKey)
 		if err != nil {
 			return nil, status.Errorf(codes.Unauthenticated, "invalid token: %v", err)
 		}
 
-		if !token.Valid {
-			return nil, ReturnUnauthenticatedError("token is not valid")
-		}
-
-		// check expiry date
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			return nil, ReturnUnauthenticatedError("invalid token claims")
-		}
-
-		exp, ok := claims["exp"].(float64)
-		if !ok || int64(exp) < time.Now().Unix() {
-			return nil, ReturnUnauthenticatedError("token has expired")
+		if err := validateToken(token); err != nil {
+			return nil, err
 		}
 
 		return handler(ctx, req)
+	}
+}
+
+func JwtMiddleware(pubKey *rsa.PublicKey) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
+			return
+		}
+
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		token, err := parseJwtToken(tokenStr, pubKey)
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+
+		if claims, ok := token.Claims.(jwt.MapClaims); ok {
+			c.Set("claims", claims)
+		}
+
+		c.Next()
 	}
 }
 
@@ -136,4 +145,32 @@ func GetTLSCredentials(tlsConfig *TLSConfig) (grpc.ServerOption, error) {
 	}
 
 	return grpc.Creds(creds), nil
+}
+
+func parseJwtToken(tokenStr string, pubKey *rsa.PublicKey) (*jwt.Token, error) {
+	return jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, ReturnUnauthenticatedError("unexpected signing method")
+		}
+		return pubKey, nil
+	})
+}
+
+func validateToken(token *jwt.Token) error {
+	if !token.Valid {
+		return ReturnUnauthenticatedError("token is not valid")
+	}
+
+	// check expiry date
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return ReturnUnauthenticatedError("invalid token claims")
+	}
+
+	exp, ok := claims["exp"].(float64)
+	if !ok || int64(exp) < time.Now().Unix() {
+		return ReturnUnauthenticatedError("token has expired")
+	}
+
+	return nil
 }

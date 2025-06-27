@@ -2,12 +2,13 @@ package rest
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
+	"github.com/Saumya40-codes/LogsGO/api/auth"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
@@ -21,7 +22,7 @@ type LabelValuesResponse struct {
 	Levels   []string
 }
 
-func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cfg *pkg.IngestionFactory) {
+func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cfg *pkg.IngestionFactory, authCfg auth.AuthConfig) {
 	r := gin.Default()
 
 	allowedOrigins := []string{"http://localhost:5173"}
@@ -49,7 +50,6 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 		origin = cfg.WebListenAddr
 	}
 	allowedOrigins = append(allowedOrigins, origin)
-	fmt.Println("Allowed origins:", allowedOrigins)
 
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     allowedOrigins,
@@ -59,7 +59,14 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 		AllowCredentials: true,
 	}))
 
+	middlewares := make([]gin.HandlerFunc, 0)
+
+	if authCfg.PublicKeyPath != "" && authCfg.PublicKey != nil {
+		middlewares = append(middlewares, auth.JwtMiddleware(authCfg.PublicKey))
+	}
+
 	api := r.Group("/api/v1")
+	api.Use(middlewares...)
 	{
 		api.GET("/query", func(g *gin.Context) {
 			expr := g.Query("expression")
@@ -123,8 +130,20 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 	log.Printf("Starting HTTP server on %s\n", cfg.HttpListenAddr)
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("ListenAndServe failed: %v", err)
+		var servErr error
+
+		if authCfg.TLSCfg != nil && authCfg.TLSConfigPath != "" {
+			if _, err := os.Stat(authCfg.TLSCfg.CertFile); os.IsNotExist(err) {
+				log.Fatalf("TLS cert not found: %s", authCfg.TLSCfg.CertFile)
+			}
+			log.Printf("Using TLS cert: %s", authCfg.TLSCfg.CertFile)
+
+			servErr = srv.ListenAndServeTLS(authCfg.TLSCfg.CertFile, authCfg.TLSCfg.KeyFile)
+		} else {
+			servErr = srv.ListenAndServe()
+		}
+		if servErr != nil && servErr != http.ErrServerClosed {
+			log.Fatalf("ListenAndServe failed: %v", servErr)
 		}
 	}()
 

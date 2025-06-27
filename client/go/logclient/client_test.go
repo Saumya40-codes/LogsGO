@@ -33,8 +33,9 @@ var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush m
 // override auth config for tests if needed
 var authConfig = auth.AuthConfig{
 	PublicKeyPath: "",
+	PublicKey:     nil,
 	TLSConfigPath: "",
-	Insecure:      true,
+	TLSCfg:        nil,
 }
 
 // removes s3 related stuff
@@ -105,7 +106,7 @@ func TestDirCreated(t *testing.T) {
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
-	go rest.StartServer(ctx, serv, &factory)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -147,7 +148,7 @@ func TestLabelValues(t *testing.T) {
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
-	go rest.StartServer(ctx, serv, &factory)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -213,7 +214,7 @@ func TestQueryOutput(t *testing.T) {
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
-	go rest.StartServer(ctx, serv, &factory)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	time.Sleep(2 * time.Second) // wait for servers
 
@@ -281,7 +282,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
-	go rest.StartServer(ctx, serv, &factory)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -359,7 +360,7 @@ func TestRangeQueries(t *testing.T) {
 	ctx := t.Context()
 	serv := ingestion.NewLogIngestorServer(ctx, &factory)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig)
-	go rest.StartServer(ctx, serv, &factory)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
 
 	time.Sleep(2 * time.Second) // wait for servers
 	startTs := time.Now()

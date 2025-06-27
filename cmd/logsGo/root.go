@@ -52,8 +52,19 @@ var rootCmd = &cobra.Command{
 		authConfig := auth.AuthConfig{
 			PublicKeyPath: cfg.PublicKeyPath,
 			TLSConfigPath: cfg.TLSConfigPath,
-			Insecure:      cfg.Insecure,
 		}
+
+		pubKey, err := auth.ParsePublicKeyFile(authConfig.PublicKeyPath)
+		if err != nil {
+			log.Fatalf("failed to parse public key: %v", err)
+		}
+		authConfig.PublicKey = pubKey
+
+		tlsCfg, err := auth.ParseTLSConfig(authConfig.TLSConfigPath)
+		if err != nil {
+			log.Fatalf("failed to parse tls config file: %v", err)
+		}
+		authConfig.TLSCfg = tlsCfg
 
 		wg.Add(3)
 		go func() {
@@ -63,7 +74,7 @@ var rootCmd = &cobra.Command{
 
 		go func() {
 			defer wg.Done()
-			rest.StartServer(ctx, serv, cfg)
+			rest.StartServer(ctx, serv, cfg, authConfig)
 		}()
 
 		log.Println("Starting logsGo UI")
@@ -92,7 +103,8 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.StoreConfig, "store-config", "", "s3 compatible store configuration, can't be used with --store-config-path flag")
 	rootCmd.Flags().StringVar(&cfg.WebListenAddr, "web-listen-addr", "http://localhost:19091", "LogsGo web client address")
 	rootCmd.Flags().StringVar(&cfg.LookbackPeriod, "lookback-period", "15m", "For instant queries (querying at current time) how much to look back in time from current time to fetch logs")
-	rootCmd.Flags().BoolVar(&cfg.Insecure, "insecure", true, "If un-set, will use TLS for gRPC and HTTP servers")
+
+	// validate auth paths file during init time only
 	rootCmd.Flags().StringVar(&cfg.PublicKeyPath, "public-key-path", "", "Path to RSA public key for JWT authentication, if set will enable JWT authentication for gRPC and HTTP servers")
 	rootCmd.Flags().StringVar(&cfg.TLSConfigPath, "tls-config-path", "", "Path to TLS configuration file for gRPC and HTTP servers, if set will enable TLS, goes well with --insecure flag")
 	rootCmd.Flags().SortFlags = true
