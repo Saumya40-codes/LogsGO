@@ -11,7 +11,7 @@ require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/go-cmp v0.7.0
-	github.com/minio/minio-go/v7 v7.0.92
+	github.com/minio/minio-go/v7 v7.0.94
 	github.com/spf13/cobra v1.9.1
 	google.golang.org/grpc v1.73.0
 	google.golang.org/protobuf v1.36.6
