@@ -9,7 +9,7 @@ build:
 	go build -o logsGo ./cmd/logsGo
 
 tests:
-	go test -v ./...
+	@go test -v ./... && cat ./.github/surp.txt
 	
 start-react-app:
 	cd ./pkg/ui && \
