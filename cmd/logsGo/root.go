@@ -137,7 +137,7 @@ func getAddr(httpAddr string) string {
 		return strings.TrimPrefix(httpAddr, "http://")
 	}
 
-	if strings.HasPrefix(httpAddr, "http://") {
+	if strings.HasPrefix(httpAddr, "https://") {
 		return strings.TrimPrefix(httpAddr, "https://")
 	}
 
