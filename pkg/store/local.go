@@ -84,7 +84,7 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 
 	for _, log := range logs {
 		// we store this way for efficient lookups, for querying we should convert back to series object
-		key := fmt.Sprintf("%d|%s|%s|%s", log.Timestamp, log.Level, log.Service, EncodeMessage(log.Message))
+		key := fmt.Sprintf("%s|%s|%s|%d", log.Level, log.Service, EncodeMessage(log.Message), log.Timestamp)
 		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
 		logSeries, ok := series[logKey]
 		if !ok {
@@ -116,15 +116,16 @@ func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) 
 	var results []InstantQueryResponse
 
 	if parse.LHS == nil && parse.RHS == nil {
-		var key string
-		if parse.Level != "" {
-			key = fmt.Sprintf(`.*|%s|.*|.*`, parse.Level)
+		prefix := ""
+		if parse.Level != "" && parse.Service != "" {
+			prefix = fmt.Sprintf("%s|%s", parse.Level, parse.Service)
+		} else if parse.Level != "" {
+			prefix = fmt.Sprintf("%s|", parse.Level)
 		} else if parse.Service != "" {
-			key = fmt.Sprintf(`.*|.*|%s|.*`, parse.Service)
-		} else {
-			return nil, fmt.Errorf("invalid query: no labels provided")
+			prefix = fmt.Sprintf(".*|%s", parse.Service) // ⚠️ still slow if you use regex
 		}
-		keys, vals, err := l.db.Get(key)
+
+		keys, vals, err := l.db.PrefixScan(prefix)
 		if err != nil {
 			if err == badger.ErrKeyNotFound {
 				return nil, fmt.Errorf("no logs found for the given filter: %w", err)
@@ -137,7 +138,7 @@ func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) 
 			if len(tokens) < 4 {
 				continue // Invalid key format
 			}
-			timestamp, err := strconv.Atoi(tokens[0])
+			timestamp, err := strconv.Atoi(tokens[3])
 			if err != nil {
 				return nil, fmt.Errorf("invalid timestamp in key %s: %w", k, err)
 			}
@@ -147,9 +148,9 @@ func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) 
 			if timeDiff > int64(timestamp) {
 				continue
 			}
-			level := tokens[1]
-			service := tokens[2]
-			message, err := DecodeMessage(tokens[3])
+			level := tokens[0]
+			service := tokens[1]
+			message, err := DecodeMessage(tokens[2])
 			if err != nil {
 				return nil, err
 			}
@@ -219,22 +220,20 @@ func (l *LocalStore) Flush() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	now := time.Now().Unix()
 	var logs []*logapi.LogEntry
 	series := make(map[LogKey]map[int64]CounterValue)
 
-	keys, vals, err := l.db.Get(".*")
-	if err != nil {
-		if err == badger.ErrKeyNotFound {
-			log.Println("No logs found to flush")
-			return nil
-		}
-		return fmt.Errorf("failed to query logs: %w", err)
-	}
+	// creating a r-only transac
+	txn := l.db.Conn.NewTransaction(false)
+	defer txn.Discard()
 
-	// get meta.json file to store all unique labels for this store
+	it := txn.NewIterator(badger.DefaultIteratorOptions)
+	defer it.Close()
+
 	file, err := getMetaFile(l.dataDir)
 	if err != nil {
-		return fmt.Errorf("failed to open required files in data dir: %w", err)
+		return fmt.Errorf("failed to open meta file: %w", err)
 	}
 	defer file.Close()
 
@@ -243,81 +242,90 @@ func (l *LocalStore) Flush() error {
 		return fmt.Errorf("failed to parse meta labels: %w", err)
 	}
 
-	for i, k := range keys {
+	// create a batch via new NewWriteBatch to delete the data in batch
+	batch := l.db.Conn.NewWriteBatch()
+	defer batch.Cancel()
+
+	for it.Rewind(); it.Valid(); it.Next() {
+		item := it.Item()
+		k := string(item.Key())
+
 		tokens := strings.Split(k, "|")
 		if len(tokens) < 4 {
-			continue // Invalid key format
-		}
-		timestamp, err := strconv.Atoi(tokens[0])
-		if err != nil {
-			return fmt.Errorf("invalid timestamp in key %s: %w", k, err)
-		}
-		level := tokens[1]
-		service := tokens[2]
-		message, err := DecodeMessage(tokens[3])
-		if err != nil {
-			return err
+			continue
 		}
 
-		countValue, err := strconv.Atoi(vals[i])
+		level, service := tokens[0], tokens[1]
+		message, err := DecodeMessage(tokens[2])
 		if err != nil {
-			return err
+			continue
+		}
+		timestamp, err := strconv.ParseInt(tokens[3], 10, 64)
+		if err != nil {
+			continue
 		}
 
-		logkey := LogKey{Service: service, Level: level, Message: message}
-		if series[logkey] == nil {
-			series[logkey] = make(map[int64]CounterValue)
-		}
-		if series[logkey][int64(timestamp)] == (CounterValue{}) {
-			series[logkey][int64(timestamp)] = CounterValue{
-				value: uint64(countValue),
-			}
+		if now-timestamp < int64(l.maxTimeInDisk.Seconds()) {
+			continue
 		}
 
-		if time.Now().Unix()-int64(timestamp) >= int64(l.maxTimeInDisk.Seconds()) {
-			logs = append(logs, &logapi.LogEntry{
-				Timestamp: int64(timestamp),
-				Level:     level,
-				Service:   service,
-				Message:   string(message),
-			})
+		valCopy, err := item.ValueCopy(nil)
+		if err != nil {
+			continue
+		}
+
+		countVal, err := strconv.Atoi(string(valCopy))
+		if err != nil {
+			continue
+		}
+
+		logKey := LogKey{Service: service, Level: level, Message: message}
+		if series[logKey] == nil {
+			series[logKey] = make(map[int64]CounterValue)
+		}
+		series[logKey][timestamp] = CounterValue{value: uint64(countVal)}
+
+		logs = append(logs, &logapi.LogEntry{
+			Timestamp: timestamp,
+			Level:     level,
+			Service:   service,
+			Message:   message,
+		})
+
+		err = batch.Delete(item.KeyCopy(nil))
+		if err != nil {
+			log.Printf("failed to batch delete %s: %v", k, err)
+		}
+
+		metaLabels.Services[service]--
+		if metaLabels.Services[service] <= 0 {
+			delete(metaLabels.Services, service)
+		}
+		metaLabels.Levels[level]--
+		if metaLabels.Levels[level] <= 0 {
+			delete(metaLabels.Levels, level)
 		}
 	}
 
 	if l.next != nil {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			err := bucketStore.Insert(logs, series)
-			if err != nil {
+			if err := bucketStore.Insert(logs, series); err != nil {
 				return err
 			}
-			fmt.Printf("%d logs have been flushed to disk\n", len(logs))
+
+			fmt.Printf("%d logs flushed to bucket store\n", len(logs))
 		}
 	}
 
-	// no err till here, we can delete logs either no need for next store by user or logs are flushed
-	for _, lg := range logs {
-		err := l.db.Delete(fmt.Sprintf("%d|%s|%s", lg.Timestamp, lg.Level, lg.Service))
-		if err != nil {
-			log.Printf("failed to delete log entry %d|%s|%s: %v", lg.Timestamp, lg.Level, lg.Service, err)
-		}
-
-		// Update the meta labels
-		metaLabels.Services[lg.Service]--
-		if metaLabels.Services[lg.Service] <= 0 {
-			delete(metaLabels.Services, lg.Service) // Remove service if count is zero
-		}
-		metaLabels.Levels[lg.Level]--
-		if metaLabels.Levels[lg.Level] <= 0 {
-			delete(metaLabels.Levels, lg.Level) // Remove level if count is zero
-		}
+	if err := batch.Flush(); err != nil {
+		return fmt.Errorf("failed to flush batched deletes: %w", err)
 	}
 
-	// Write the updated meta labels to the file
 	if err := writeLabelsToFile(file, metaLabels, l.dataDir); err != nil {
-		return fmt.Errorf("failed to write meta labels to file: %w", err)
+		return fmt.Errorf("failed to write meta labels: %w", err)
 	}
 
-	l.db.RunGC() // run post flushed gc to make sure deleted refs are rewritten in vlogs
+	l.db.RunGC()
 	return nil
 }
 
@@ -398,7 +406,7 @@ func DecodeMessage(encoded string) (string, error) {
 }
 
 func getMetaFile(dir string) (*os.File, error) {
-	file, err := os.OpenFile(fmt.Sprintf("%s/meta.json", dir), os.O_RDWR|os.O_CREATE, 0644)
+	file, err := os.OpenFile(fmt.Sprintf("%s/meta.json", dir), os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open meta.json file: %w", err)
 	}

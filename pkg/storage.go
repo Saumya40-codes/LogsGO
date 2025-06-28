@@ -9,7 +9,7 @@ import (
 )
 
 type DB struct {
-	conn *badger.DB
+	Conn *badger.DB
 }
 
 func OpenDB(opts badger.Options) (*DB, error) {
@@ -17,22 +17,22 @@ func OpenDB(opts badger.Options) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badgerDB at %s: %w", opts.Dir, err)
 	}
-	return &DB{conn: db}, nil
+	return &DB{Conn: db}, nil
 }
 
 func (db *DB) CloseDB() {
-	db.conn.Close()
+	db.Conn.Close()
 }
 
 func (db *DB) Save(key string, value []byte) error {
-	return db.conn.Update(func(txn *badger.Txn) error {
+	return db.Conn.Update(func(txn *badger.Txn) error {
 		return txn.Set([]byte(key), value)
 	})
 }
 
 func (db *DB) Load(key string) ([]byte, error) {
 	var value []byte
-	err := db.conn.View(func(txn *badger.Txn) error {
+	err := db.Conn.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(key))
 		if err != nil {
 			return err
@@ -44,7 +44,7 @@ func (db *DB) Load(key string) ([]byte, error) {
 }
 
 func (db *DB) Delete(key string) error {
-	err := db.conn.Update(func(txn *badger.Txn) error {
+	err := db.Conn.Update(func(txn *badger.Txn) error {
 		err := txn.Delete([]byte(key))
 
 		return err
@@ -55,7 +55,7 @@ func (db *DB) Delete(key string) error {
 
 func (db *DB) GetKey(regex string) ([]string, error) {
 	var uniqueKeys []string
-	err := db.conn.View(func(txn *badger.Txn) error {
+	err := db.Conn.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
@@ -77,7 +77,7 @@ func (db *DB) GetKey(regex string) ([]string, error) {
 func (db *DB) Get(regex string) ([]string, []string, error) {
 	var keys []string
 	var values []string
-	err := db.conn.View(func(txn *badger.Txn) error {
+	err := db.Conn.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
@@ -101,9 +101,39 @@ func (db *DB) Get(regex string) ([]string, []string, error) {
 	return keys, values, nil
 }
 
+// Get an interator with prefetched values based on the matching prefix
+func (db *DB) PrefixScan(prefix string) ([]string, []string, error) {
+	var keys []string
+	var values []string
+
+	err := db.Conn.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = true // ok, we reduce lookups with this
+		opts.Prefix = []byte(prefix)
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			key := item.Key()
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+
+			keys = append(keys, string(key))
+			values = append(values, string(val))
+		}
+		return nil
+	})
+
+	return keys, values, err
+}
+
 func (db *DB) RunGC() {
 	for {
-		err := db.conn.RunValueLogGC(0.5)
+		err := db.Conn.RunValueLogGC(0.5)
 
 		if err == badger.ErrNoRewrite {
 			break
