@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Saumya40-codes/LogsGO/api/auth"
+	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
@@ -87,7 +88,7 @@ func TestGRPCConn(t *testing.T) {
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
 
-	opts := &Opts{
+	opts := &logapi.LogEntry{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
@@ -96,9 +97,8 @@ func TestGRPCConn(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	ok := lc.UploadLog(opts)
-
-	testutil.Assert(t, ok, "logs can't be uploaded")
+	err = lc.UploadLog(opts)
+	testutil.Ok(t, err)
 }
 
 func TestDirCreated(t *testing.T) {
@@ -111,7 +111,7 @@ func TestDirCreated(t *testing.T) {
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
 
-	opts := &Opts{
+	opts := &logapi.LogEntry{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
@@ -120,9 +120,8 @@ func TestDirCreated(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	ok := lc.UploadLog(opts)
-
-	testutil.Assert(t, ok, "logs can't be uploaded")
+	err = lc.UploadLog(opts)
+	testutil.Ok(t, err)
 
 	// we should have 'atleast' something in data/
 	checkDirExists(t, factory.DataDir)
@@ -153,7 +152,7 @@ func TestLabelValues(t *testing.T) {
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
 
-	opts := &Opts{
+	opts := &logapi.LogEntry{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
@@ -162,9 +161,9 @@ func TestLabelValues(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	ok := lc.UploadLog(opts)
+	err = lc.UploadLog(opts)
+	testutil.Ok(t, err)
 
-	testutil.Assert(t, ok, "logs can't be uploaded")
 	// there should be persistance in memory store
 
 	resp, err := http.Get("http://localhost:8080/api/v1/labels")
@@ -218,7 +217,7 @@ func TestQueryOutput(t *testing.T) {
 
 	time.Sleep(2 * time.Second) // wait for servers
 
-	opts := &Opts{
+	opts := &logapi.LogEntry{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
@@ -227,7 +226,9 @@ func TestQueryOutput(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	testutil.Assert(t, lc.UploadLog(opts), "logs can't be uploaded")
+	err = lc.UploadLog(opts)
+	testutil.Ok(t, err)
+
 	time.Sleep(2 * time.Second)
 
 	// Check log in memory
@@ -243,7 +244,7 @@ func TestQueryOutput(t *testing.T) {
 	})
 
 	// Upload log again (should increment count)
-	testutil.Assert(t, lc.UploadLog(opts), "logs can't be uploaded again")
+	testutil.Ok(t, lc.UploadLog(opts), "Failed to upload log again")
 
 	// Check log count = 2
 	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
@@ -287,13 +288,13 @@ func TestLogDataUploadToS3(t *testing.T) {
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
 
-	opts := &Opts{
+	opts := &logapi.LogEntry{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
 	}
 
-	newOpt := &Opts{
+	newOpt := &logapi.LogEntry{
 		Message: "Notification has been sent",
 		Level:   "info",
 		Service: "myService",
@@ -302,9 +303,10 @@ func TestLogDataUploadToS3(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	ok := lc.UploadLog(opts)
-	ok1 := lc.UploadLog(newOpt)
-	testutil.Assert(t, ok && ok1, "logs can't be uploaded")
+	err = lc.UploadLog(opts)
+	testutil.Ok(t, err, "logs can't be uploaded")
+
+	testutil.Ok(t, lc.UploadLog(newOpt), "logs can't be uploaded")
 
 	time.Sleep(20 * time.Second) // TODO: this is time consuming but can't figure out better way, so adding t.Parallel's would do the job
 
@@ -365,29 +367,27 @@ func TestRangeQueries(t *testing.T) {
 	time.Sleep(2 * time.Second) // wait for servers
 	startTs := time.Now()
 
-	opts := &Opts{
+	opts := &logapi.LogEntry{
 		Message:   "Time duration execeeded",
 		Level:     "warn",
 		Service:   "ap-south1",
-		TimeStamp: startTs.Unix(),
+		Timestamp: startTs.Unix(),
 	}
 
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	ok := lc.UploadLog(opts)
-	testutil.Assert(t, ok, "logs can't be uploaded")
+	err = lc.UploadLog(opts)
+	testutil.Ok(t, err)
 
 	// add logs +15min after startTs
 	newOpts := opts
-	newOpts.TimeStamp = startTs.Add(15 * time.Minute).Unix()
-	ok = lc.UploadLog(newOpts)
-	testutil.Assert(t, ok, "logs can't be uploaded")
+	newOpts.Timestamp = startTs.Add(15 * time.Minute).Unix()
+	testutil.Ok(t, lc.UploadLog(newOpts), "logs can't be uploaded")
 
 	// add logs +30min after startTs
-	newOpts.TimeStamp = startTs.Add(30 * time.Minute).Unix()
-	ok = lc.UploadLog(newOpts)
-	testutil.Assert(t, ok, "logs can't be uploaded")
+	newOpts.Timestamp = startTs.Add(30 * time.Minute).Unix()
+	testutil.Ok(t, lc.UploadLog(newOpts), "logs can't be uploaded")
 
 	// perform range query for 15min interval
 	queryStart := startTs.Unix()
