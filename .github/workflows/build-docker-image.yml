@@ -9,6 +9,7 @@ on:
       - 'docs/**'
       - 'examples/**'
       - '.github/**'
+      - 'Makefile'
       
 jobs:
   build-and-push:
