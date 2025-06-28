@@ -25,7 +25,11 @@
     ```
     service=ap-south-1|service="us-west-1"
     ```
-    
+
+- **JWT based authentication support**: If public key info to decode incoming jwt token on REST and gRPC token is specified. (check `logGo -help`)
+
+- **Support for TLS**: On REST and gRPC endpoints, if corresponding configuration file containing secret and cert file location is provided (for e.g. while running `./logsGo --tls-config-path="auth.yaml"`, check `./examples/tls-config.yaml` for more info)
+
 - **Web dashboard**: Simple UI to query and visualize logs.
 - **Client library**: Embed the LogsGo client into your service and send logs using `UploadLogs()` over gRPC. Example:
   ```

@@ -1,0 +1,2 @@
+cert_file: certs/serv.crt
+key_file: certs/serv.key
