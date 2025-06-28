@@ -120,7 +120,7 @@ func (m *MemoryStore) QueryInstant(parse LogFilter, lookback int64, qTime int64)
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
 		for _, r := range append(lhsResults, rhsResults...) {
-			key := r.Service + "|" + r.Level + "|" + r.Message + "|"
+			key := r.Service + "|" + r.Level + "|" + r.Message
 			if _, exists := deduped[key]; !exists {
 				deduped[key] = r
 			}
@@ -137,11 +137,11 @@ func (m *MemoryStore) QueryInstant(parse LogFilter, lookback int64, qTime int64)
 		}
 		rhsMap := make(map[string]struct{})
 		for _, r := range rhsResults {
-			key := r.Service + "|" + r.Level + "|" + r.Message + "|"
+			key := r.Service + "|" + r.Level + "|" + r.Message
 			rhsMap[key] = struct{}{}
 		}
 		for _, r := range lhsResults {
-			key := r.Service + "|" + r.Level + "|" + r.Message + "|"
+			key := r.Service + "|" + r.Level + "|" + r.Message
 			if _, ok := rhsMap[key]; ok {
 				if _, exists := deduped[key]; !exists {
 					deduped[key] = r
@@ -158,7 +158,7 @@ func (m *MemoryStore) QueryInstant(parse LogFilter, lookback int64, qTime int64)
 				return nil, fmt.Errorf("failed to query next store: %w", err)
 			}
 			for _, r := range nextResults {
-				key := r.Service + "|" + r.Level + "|" + r.Message + "|"
+				key := r.Service + "|" + r.Level + "|" + r.Message
 				if _, exists := deduped[key]; !exists {
 					deduped[key] = r
 				}
