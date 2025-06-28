@@ -122,7 +122,7 @@ func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) 
 		} else if parse.Level != "" {
 			prefix = fmt.Sprintf("%s|", parse.Level)
 		} else if parse.Service != "" {
-			prefix = fmt.Sprintf(".*|%s", parse.Service) // ⚠️ still slow if you use regex
+			prefix = fmt.Sprintf(".*|%s", parse.Service)
 		}
 
 		keys, vals, err := l.db.PrefixScan(prefix)
