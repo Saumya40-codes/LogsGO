@@ -97,7 +97,7 @@ func TestGRPCConn(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	err = lc.UploadLog(opts)
+	err = lc.UploadLog(ctx, opts)
 	testutil.Ok(t, err)
 }
 
@@ -120,7 +120,7 @@ func TestDirCreated(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	err = lc.UploadLog(opts)
+	err = lc.UploadLog(ctx, opts)
 	testutil.Ok(t, err)
 
 	// we should have 'atleast' something in data/
@@ -161,7 +161,7 @@ func TestLabelValues(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	err = lc.UploadLog(opts)
+	err = lc.UploadLog(ctx, opts)
 	testutil.Ok(t, err)
 
 	// there should be persistance in memory store
@@ -226,7 +226,7 @@ func TestQueryOutput(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	err = lc.UploadLog(opts)
+	err = lc.UploadLog(ctx, opts)
 	testutil.Ok(t, err)
 
 	time.Sleep(2 * time.Second)
@@ -244,7 +244,7 @@ func TestQueryOutput(t *testing.T) {
 	})
 
 	// Upload log again (should increment count)
-	testutil.Ok(t, lc.UploadLog(opts), "Failed to upload log again")
+	testutil.Ok(t, lc.UploadLog(ctx, opts), "Failed to upload log again")
 
 	// Check log count = 2
 	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
@@ -303,10 +303,10 @@ func TestLogDataUploadToS3(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	err = lc.UploadLog(opts)
+	err = lc.UploadLog(ctx, opts)
 	testutil.Ok(t, err, "logs can't be uploaded")
 
-	testutil.Ok(t, lc.UploadLog(newOpt), "logs can't be uploaded")
+	testutil.Ok(t, lc.UploadLog(ctx, newOpt), "logs can't be uploaded")
 
 	time.Sleep(20 * time.Second) // TODO: this is time consuming but can't figure out better way, so adding t.Parallel's would do the job
 
@@ -377,17 +377,17 @@ func TestRangeQueries(t *testing.T) {
 	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
 	testutil.Ok(t, err)
 
-	err = lc.UploadLog(opts)
+	err = lc.UploadLog(ctx, opts)
 	testutil.Ok(t, err)
 
 	// add logs +15min after startTs
 	newOpts := opts
 	newOpts.Timestamp = startTs.Add(15 * time.Minute).Unix()
-	testutil.Ok(t, lc.UploadLog(newOpts), "logs can't be uploaded")
+	testutil.Ok(t, lc.UploadLog(ctx, newOpts), "logs can't be uploaded")
 
 	// add logs +30min after startTs
 	newOpts.Timestamp = startTs.Add(30 * time.Minute).Unix()
-	testutil.Ok(t, lc.UploadLog(newOpts), "logs can't be uploaded")
+	testutil.Ok(t, lc.UploadLog(ctx, newOpts), "logs can't be uploaded")
 
 	// perform range query for 15min interval
 	queryStart := startTs.Unix()

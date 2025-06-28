@@ -52,7 +52,7 @@ func (c *Client) Close() error {
 }
 
 // UploadLog sends a log entry to the server.
-func (c *Client) UploadLog(entry *logapi.LogEntry) error {
+func (c *Client) UploadLog(ctx context.Context, entry *logapi.LogEntry) error {
 	if entry == nil {
 		return errors.New("no options provided for log upload")
 	}
@@ -63,7 +63,7 @@ func (c *Client) UploadLog(entry *logapi.LogEntry) error {
 		entry.Timestamp = time.Now().Unix()
 	}
 
-	res, err := c.client.UploadLog(context.Background(), entry)
+	res, err := c.client.UploadLog(ctx, entry)
 	if err != nil {
 		return err
 	}
@@ -79,12 +79,12 @@ func (c *Client) UploadLog(entry *logapi.LogEntry) error {
 }
 
 // UploadLogs performs a batch upload, same as UploadLog but accepts slice of LogEntry to upload
-func (c *Client) UploadLogs(entries *logapi.LogBatch) error {
+func (c *Client) UploadLogs(ctx context.Context, entries *logapi.LogBatch) error {
 	if err := ValidateLogs(entries); err != nil {
 		return err
 	}
 
-	res, err := c.client.UploadLogs(context.Background(), entries)
+	res, err := c.client.UploadLogs(ctx, entries)
 	if err != nil {
 		return err
 	}
