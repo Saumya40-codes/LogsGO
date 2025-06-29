@@ -94,6 +94,9 @@ func ReturnUnauthenticatedError(msg string) error {
 }
 
 func ParsePublicKeyFile(path string) (*rsa.PublicKey, error) {
+	if path == "" {
+		return nil, nil
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, errors.New("failed to open public key file: " + err.Error())
@@ -118,6 +121,10 @@ func ParsePublicKeyFile(path string) (*rsa.PublicKey, error) {
 }
 
 func ParseTLSConfig(path string) (*TLSConfig, error) {
+	if path == "" {
+		return nil, nil
+	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, errors.New("failed to open TLS config file: " + err.Error())
