@@ -10,9 +10,6 @@ on:
       - 'examples/**'
       - '.github/**'
       - 'Makefile'
-  workflow_run:
-      workflows: ["Go Buld & Tests"]
-      types: [completed]
       
 jobs:
   build-and-push:
