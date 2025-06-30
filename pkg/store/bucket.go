@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -297,33 +298,43 @@ func (b *BucketStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQ
 					Count:     log.Count,
 					TimeStamp: log.Entry.Timestamp,
 				})
-				break
 			}
 		}
 	} else {
-		lhsCfg := cfg
-		lhsCfg.Filter = *cfg.Filter.LHS
-		lhsResults, err := b.QueryInstant(lhsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query LHS: %w", err)
+		lhsResults := make([]InstantQueryResponse, 0)
+		var err error
+		if cfg.Filter.LHS != nil {
+			lhsCfg := *cfg
+			lhsCfg.Filter = *cfg.Filter.LHS
+			lhsResults, err = b.QueryInstant(&lhsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query LHS: %w", err)
+			}
 		}
 
-		rhsCfg := cfg
-		rhsCfg.Filter = *cfg.Filter.RHS
-		rhsResults, err := b.QueryInstant(rhsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query RHS: %w", err)
+		rhsResults := make([]InstantQueryResponse, 0)
+		if cfg.Filter.RHS != nil {
+			rhsCfg := *cfg
+			rhsCfg.Filter = *cfg.Filter.RHS
+			rhsResults, err = b.QueryInstant(&rhsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query RHS: %w", err)
+			}
 		}
 
 		if cfg.Filter.Or {
 			result = append(result, lhsResults...)
 			result = append(result, rhsResults...)
 		} else {
-			for _, lhsLog := range lhsResults {
-				for _, rhsLog := range rhsResults {
-					if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.TimeStamp == rhsLog.TimeStamp {
-						result = append(result, lhsLog)
-					}
+			rhsMap := make(map[string]InstantQueryResponse)
+			for _, r := range rhsResults {
+				key := r.Service + "|" + r.Level + "|" + strconv.FormatInt(r.TimeStamp, 10)
+				rhsMap[key] = r
+			}
+			for _, l := range lhsResults {
+				key := l.Service + "|" + l.Level + "|" + strconv.FormatInt(l.TimeStamp, 10)
+				if _, exists := rhsMap[key]; exists {
+					result = append(result, l)
 				}
 			}
 		}

@@ -109,18 +109,25 @@ func (m *MemoryStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQ
 			})
 		}
 	} else {
-		lhsCfg := cfg
-		lhsCfg.Filter = *cfg.Filter.LHS
-		lhsResults, err := m.QueryInstant(lhsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query LHS: %w", err)
+		lhsResults := make([]InstantQueryResponse, 0)
+		var err error
+		if cfg.Filter.LHS != nil {
+			lhsCfg := *cfg
+			lhsCfg.Filter = *cfg.Filter.LHS
+			lhsResults, err = m.QueryInstant(&lhsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query LHS: %w", err)
+			}
 		}
 
-		rhsCfg := cfg
-		rhsCfg.Filter = *cfg.Filter.RHS
-		rhsResults, err := m.QueryInstant(rhsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query RHS: %w", err)
+		rhsResults := make([]InstantQueryResponse, 0)
+		if cfg.Filter.RHS != nil {
+			rhsCfg := *cfg
+			rhsCfg.Filter = *cfg.Filter.RHS
+			rhsResults, err = m.QueryInstant(&rhsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query RHS: %w", err)
+			}
 		}
 
 		if cfg.Filter.Or {

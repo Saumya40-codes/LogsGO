@@ -176,18 +176,25 @@ func (l *LocalStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQu
 			}
 		}
 	} else {
-		lhsCfg := cfg
-		lhsCfg.Filter = *cfg.Filter.LHS
-		lhsResults, err := l.QueryInstant(lhsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query LHS: %w", err)
+		lhsResults := make([]InstantQueryResponse, 0)
+		var err error
+		if cfg.Filter.LHS != nil {
+			lhsCfg := *cfg
+			lhsCfg.Filter = *cfg.Filter.LHS
+			lhsResults, err = l.QueryInstant(&lhsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query LHS: %w", err)
+			}
 		}
 
-		rhsCfg := cfg
-		rhsCfg.Filter = *cfg.Filter.RHS
-		rhsResults, err := l.QueryInstant(rhsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query RHS: %w", err)
+		rhsResults := make([]InstantQueryResponse, 0)
+		if cfg.Filter.RHS != nil {
+			rhsCfg := *cfg
+			rhsCfg.Filter = *cfg.Filter.RHS
+			rhsResults, err = l.QueryInstant(&rhsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query RHS: %w", err)
+			}
 		}
 
 		if cfg.Filter.Or {
@@ -195,11 +202,15 @@ func (l *LocalStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQu
 			results = append(results, rhsResults...)
 		} else {
 			// Intersect the results
-			for _, lhsLog := range lhsResults {
-				for _, rhsLog := range rhsResults {
-					if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.TimeStamp == rhsLog.TimeStamp {
-						results = append(results, lhsLog)
-					}
+			rhsMap := make(map[string]struct{})
+			for _, r := range rhsResults {
+				key := r.Service + "|" + r.Level + "|" + r.Message
+				rhsMap[key] = struct{}{}
+			}
+			for _, r := range lhsResults {
+				key := r.Service + "|" + r.Level + "|" + r.Message
+				if _, ok := rhsMap[key]; ok {
+					results = append(results, r)
 				}
 			}
 		}
