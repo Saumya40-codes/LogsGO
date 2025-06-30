@@ -184,7 +184,8 @@ func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]store.QueryResponse, 
 			s.cfg.QueryTime = time.Now().Unix()
 		}
 
-		instantLogs, err := s.Store.QueryInstant(parse, s.cfg.LookbackPeriod, s.cfg.QueryTime)
+		instantConfig := logsgoql.NewInstantQueryConfig(s.cfg.QueryTime, s.cfg.LookbackPeriod, parse)
+		instantLogs, err := s.Store.QueryInstant(instantConfig)
 		if err != nil {
 			log.Printf("failed to query logs: %v", err)
 			return nil, err
@@ -192,7 +193,8 @@ func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]store.QueryResponse, 
 
 		logs = changeToQueryResponse(instantLogs)
 	} else {
-		logs, err = s.Store.QueryRange(parse, s.cfg.LookbackPeriod, req.StartTs, req.EndTs, req.Resolution)
+		rangeConfig := logsgoql.NewRangeQueryConfig(req.StartTs, req.EndTs, s.cfg.LookbackPeriod, req.Resolution, parse)
+		logs, err = s.Store.QueryRange(rangeConfig)
 		if err != nil {
 			log.Printf("failed to query logs: %v", err)
 			return nil, err

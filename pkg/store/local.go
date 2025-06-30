@@ -15,6 +15,7 @@ import (
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/dgraph-io/badger/v4"
 )
 
@@ -112,28 +113,32 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 	return nil
 }
 
-func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) ([]InstantQueryResponse, error) {
+func (l *LocalStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
 	var results []InstantQueryResponse
 
-	if parse.LHS == nil && parse.RHS == nil {
+	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
 		prefix := ""
-		if parse.Level != "" && parse.Service != "" {
-			prefix = fmt.Sprintf("%s|%s", parse.Level, parse.Service)
-		} else if parse.Level != "" {
-			prefix = fmt.Sprintf("%s|", parse.Level)
-		} else if parse.Service != "" {
-			prefix = fmt.Sprintf(".*|%s", parse.Service)
+		if cfg.Filter.Level != "" && cfg.Filter.Service != "" {
+			prefix = fmt.Sprintf("%s|%s", cfg.Filter.Level, cfg.Filter.Service)
+		} else if cfg.Filter.Level != "" {
+			prefix = fmt.Sprintf("%s|", cfg.Filter.Level)
+		} else if cfg.Filter.Service != "" {
+			prefix = fmt.Sprintf(".*|%s", cfg.Filter.Service)
 		}
 
-		keys, vals, err := l.db.PrefixScan(prefix)
-		if err != nil {
-			if err == badger.ErrKeyNotFound {
-				return nil, fmt.Errorf("no logs found for the given filter: %w", err)
+		cfg.Cache.LocalOnce.Do(func() {
+			cfg.Cache.LocalKeys, cfg.Cache.LocalVals, cfg.Cache.LocalErr = l.db.PrefixScan(prefix)
+		})
+
+		if cfg.Cache.LocalErr != nil {
+			if cfg.Cache.LocalErr == badger.ErrKeyNotFound {
+				return nil, fmt.Errorf("no logs found for the given filter: %w", cfg.Cache.LocalErr)
 			}
-			return nil, fmt.Errorf("failed to query logs: %w", err)
+			return nil, fmt.Errorf("failed to query logs: %w", cfg.Cache.LocalErr)
 		}
+
 		nearestT := -1
-		for i, k := range keys {
+		for i, k := range cfg.Cache.LocalKeys {
 			tokens := strings.Split(k, "|")
 			if len(tokens) < 4 {
 				continue // Invalid key format
@@ -144,7 +149,7 @@ func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) 
 			}
 
 			// skip this sample if it falls outside time range
-			timeDiff := qTime - lookback
+			timeDiff := cfg.Ts - cfg.Lookback
 			if timeDiff > int64(timestamp) {
 				continue
 			}
@@ -154,12 +159,12 @@ func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) 
 			if err != nil {
 				return nil, err
 			}
-			counterVal, err := strconv.Atoi(vals[i])
+			counterVal, err := strconv.Atoi(cfg.Cache.LocalVals[i])
 			if err != nil {
-				return nil, fmt.Errorf("invalid count in value %s: %w", vals[i], err)
+				return nil, fmt.Errorf("invalid count in value %s: %w", cfg.Cache.LocalVals[i], err)
 			}
 
-			if ((parse.Level != "" && level == parse.Level) || (parse.Service != "" && service == parse.Service)) && (timestamp > nearestT) {
+			if ((cfg.Filter.Level != "" && level == cfg.Filter.Level) || (cfg.Filter.Service != "" && service == cfg.Filter.Service)) && (timestamp > nearestT) {
 				nearestT = timestamp
 				results = append(results, InstantQueryResponse{
 					TimeStamp: int64(timestamp),
@@ -170,30 +175,31 @@ func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) 
 				})
 			}
 		}
-	} else if parse.Or {
-		lhsResults, err := l.QueryInstant(*parse.LHS, lookback, qTime)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query LHS: %w", err)
-		}
-		rhsResults, err := l.QueryInstant(*parse.RHS, lookback, qTime)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query RHS: %w", err)
-		}
-		results = append(lhsResults, rhsResults...)
 	} else {
-		lhsResults, err := l.QueryInstant(*parse.LHS, lookback, qTime)
+		lhsCfg := cfg
+		lhsCfg.Filter = *cfg.Filter.LHS
+		lhsResults, err := l.QueryInstant(lhsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query LHS: %w", err)
 		}
-		rhsResults, err := l.QueryInstant(*parse.RHS, lookback, qTime)
+
+		rhsCfg := cfg
+		rhsCfg.Filter = *cfg.Filter.RHS
+		rhsResults, err := l.QueryInstant(rhsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
-		// Intersect the results
-		for _, lhsLog := range lhsResults {
-			for _, rhsLog := range rhsResults {
-				if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.TimeStamp == rhsLog.TimeStamp {
-					results = append(results, lhsLog)
+
+		if cfg.Filter.Or {
+			results = append(results, lhsResults...)
+			results = append(results, rhsResults...)
+		} else {
+			// Intersect the results
+			for _, lhsLog := range lhsResults {
+				for _, rhsLog := range rhsResults {
+					if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.TimeStamp == rhsLog.TimeStamp {
+						results = append(results, lhsLog)
+					}
 				}
 			}
 		}
@@ -201,7 +207,7 @@ func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) 
 
 	if l.next != nil {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			res, err := bucketStore.QueryInstant(parse, lookback, qTime)
+			res, err := bucketStore.QueryInstant(cfg)
 			if err != nil {
 				return nil, err
 			}
@@ -212,7 +218,7 @@ func (l *LocalStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) 
 	return results, nil
 }
 
-func (l *LocalStore) QueryRange(parse LogFilter, lookback int64, qStart, qEnd, resolution int64) ([]QueryResponse, error) {
+func (l *LocalStore) QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryResponse, error) {
 	return nil, nil
 }
 

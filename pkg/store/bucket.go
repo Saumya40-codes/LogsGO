@@ -13,6 +13,7 @@ import (
 	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
+	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"google.golang.org/protobuf/proto"
@@ -85,7 +86,6 @@ func (b *BucketStore) InitClient() error {
 		Creds:  credentials.NewStaticV4(b.config.AccessKey, b.config.SecretKey, ""),
 		Secure: b.config.UseSSL,
 	})
-
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,6 @@ func (b *BucketStore) InitClient() error {
 		err = client.MakeBucket(b.ctx, b.config.Bucket, minio.MakeBucketOptions{
 			Region: b.config.Region, // should not be minio thing, compatible for othet S3s
 		})
-
 		if err != nil {
 			exists, errBucketExists := client.BucketExists(b.ctx, b.config.Bucket)
 			if errBucketExists == nil && exists {
@@ -226,7 +225,6 @@ func (b *BucketStore) uploadLogsToStorage(batch *logapi.SeriesBatch, objectName 
 			ContentType: "application/octet-stream",
 		},
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to upload to S3 storage: %w", err)
 	}
@@ -268,12 +266,14 @@ func (b *BucketStore) LabelValues(labels *Labels) error {
 	return nil
 }
 
-func (b *BucketStore) QueryInstant(filter LogFilter, lookback int64, qTime int64) ([]InstantQueryResponse, error) {
-	var logs []*logapi.Series
-	b.fetchLogs(&logs)
+func (b *BucketStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
+	cfg.Cache.BucketOnce.Do(func() {
+		b.fetchLogs(&cfg.Cache.BucketData)
+	})
+
 	var result []InstantQueryResponse
 
-	slices.SortFunc(logs, func(a, b *logapi.Series) int {
+	slices.SortFunc(cfg.Cache.BucketData, func(a, b *logapi.Series) int {
 		if a.Entry.Timestamp < b.Entry.Timestamp {
 			return 1
 		}
@@ -283,13 +283,13 @@ func (b *BucketStore) QueryInstant(filter LogFilter, lookback int64, qTime int64
 		return 0
 	})
 
-	if filter.LHS == nil && filter.RHS == nil {
-		for _, log := range logs {
+	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
+		for _, log := range cfg.Cache.BucketData {
 			// break this log if it falls outside lookback period, we sort above so this is fine
-			if qTime-lookback > log.Entry.Timestamp {
+			if cfg.Ts-cfg.Lookback > log.Entry.Timestamp {
 				break
 			}
-			if (filter.Level == "" || log.Entry.Level == filter.Level) && (filter.Service == "" || log.Entry.Service == filter.Service) {
+			if (cfg.Filter.Level == "" || log.Entry.Level == cfg.Filter.Level) && (cfg.Filter.Service == "" || log.Entry.Service == cfg.Filter.Service) {
 				result = append(result, InstantQueryResponse{
 					Service:   log.Entry.Service,
 					Level:     log.Entry.Level,
@@ -301,25 +301,24 @@ func (b *BucketStore) QueryInstant(filter LogFilter, lookback int64, qTime int64
 			}
 		}
 	} else {
-		if filter.Or {
-			lhsResults, err := b.QueryInstant(*filter.LHS, lookback, qTime)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query LHS: %w", err)
-			}
-			rhsResults, err := b.QueryInstant(*filter.RHS, lookback, qTime)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query RHS: %w", err)
-			}
-			result = append(lhsResults, rhsResults...)
+		lhsCfg := cfg
+		lhsCfg.Filter = *cfg.Filter.LHS
+		lhsResults, err := b.QueryInstant(lhsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query LHS: %w", err)
+		}
+
+		rhsCfg := cfg
+		rhsCfg.Filter = *cfg.Filter.RHS
+		rhsResults, err := b.QueryInstant(rhsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query RHS: %w", err)
+		}
+
+		if cfg.Filter.Or {
+			result = append(result, lhsResults...)
+			result = append(result, rhsResults...)
 		} else {
-			lhsResults, err := b.QueryInstant(*filter.LHS, lookback, qTime)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query LHS: %w", err)
-			}
-			rhsResults, err := b.QueryInstant(*filter.RHS, lookback, qTime)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query RHS: %w", err)
-			}
 			for _, lhsLog := range lhsResults {
 				for _, rhsLog := range rhsResults {
 					if lhsLog.Service == rhsLog.Service && lhsLog.Level == rhsLog.Level && lhsLog.TimeStamp == rhsLog.TimeStamp {
@@ -332,7 +331,7 @@ func (b *BucketStore) QueryInstant(filter LogFilter, lookback int64, qTime int64
 	return result, nil
 }
 
-func (b *BucketStore) QueryRange(parse LogFilter, lookback int64, qStart, qEnd, resolution int64) ([]QueryResponse, error) {
+func (b *BucketStore) QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryResponse, error) {
 	return nil, nil
 }
 
@@ -415,7 +414,6 @@ func (b *BucketStore) UpdateMetaData(labels *Labels) error {
 			ContentType: "application/json",
 		},
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to update metadata in S3 storage: %w", err)
 	}

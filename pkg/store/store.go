@@ -6,12 +6,13 @@ import (
 	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
+	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 )
 
 // Store interfaces defines the methods that any store implementation should provide.
 type Store interface {
-	QueryInstant(filter LogFilter, lookback int64, qTime int64) ([]InstantQueryResponse, error)          // Returns logs matching the filter
-	QueryRange(parse LogFilter, lookback int64, qStart, qEnd, resolution int64) ([]QueryResponse, error) // Returns logs matching the filter in a range
+	QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) // Returns logs matching the filter
+	QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryResponse, error)            // Returns logs matching the filter in a range
 	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error
 	Flush() error
 	Close() error
@@ -63,14 +64,6 @@ type LogKey struct {
 type CounterValue struct {
 	value uint64
 }
-
-var (
-	ErrInvalidQuery   = errors.New("invalid_query")
-	ErrNotFound       = errors.New("not_found")
-	ErrInternal       = errors.New("internal_error")
-	ErrNotImplemented = errors.New("not_implemented")
-	ErrInvalidLabel   = errors.New("invalid_label")
-)
 
 func Contains(slice []string, item string) bool {
 	for _, v := range slice {

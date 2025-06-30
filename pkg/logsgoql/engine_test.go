@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/efficientgo/core/testutil"
 	"github.com/google/go-cmp/cmp"
 )
@@ -12,17 +11,17 @@ import (
 func TestParseQuery(t *testing.T) {
 	tests := []struct {
 		query          string
-		expectedFilter store.LogFilter
+		expectedFilter LogFilter
 		expectError    bool
 	}{
 		{
 			query: "level=error | service=auth",
-			expectedFilter: store.LogFilter{
+			expectedFilter: LogFilter{
 				Or: true,
-				LHS: &store.LogFilter{
+				LHS: &LogFilter{
 					Level: "error",
 				},
-				RHS: &store.LogFilter{
+				RHS: &LogFilter{
 					Service: "auth",
 				},
 			},
@@ -30,12 +29,12 @@ func TestParseQuery(t *testing.T) {
 		},
 		{
 			query: "level=info & service=auth",
-			expectedFilter: store.LogFilter{
+			expectedFilter: LogFilter{
 				Or: false,
-				LHS: &store.LogFilter{
+				LHS: &LogFilter{
 					Level: "info",
 				},
-				RHS: &store.LogFilter{
+				RHS: &LogFilter{
 					Service: "auth",
 				},
 			},
@@ -43,12 +42,12 @@ func TestParseQuery(t *testing.T) {
 		},
 		{
 			query: "level=\"error\" | service=\"auth\"",
-			expectedFilter: store.LogFilter{
+			expectedFilter: LogFilter{
 				Or: true,
-				LHS: &store.LogFilter{
+				LHS: &LogFilter{
 					Level: "error",
 				},
-				RHS: &store.LogFilter{
+				RHS: &LogFilter{
 					Service: "auth",
 				},
 			},
@@ -56,17 +55,17 @@ func TestParseQuery(t *testing.T) {
 		},
 		{
 			query:          "level=error | service=auth | extra=field",
-			expectedFilter: store.LogFilter{},
+			expectedFilter: LogFilter{},
 			expectError:    true, // More than two filters in OR condition not supported
 		},
 		{
 			query:          "level=error & service=auth & extra=field",
-			expectedFilter: store.LogFilter{},
+			expectedFilter: LogFilter{},
 			expectError:    true, // More than two filters in AND condition not supported
 		},
 		{
 			query: `service="auth"`,
-			expectedFilter: store.LogFilter{
+			expectedFilter: LogFilter{
 				Or:      false,
 				Service: "auth",
 			},
@@ -74,7 +73,7 @@ func TestParseQuery(t *testing.T) {
 		},
 		{
 			query: `level="warn"`,
-			expectedFilter: store.LogFilter{
+			expectedFilter: LogFilter{
 				Or:    false,
 				Level: "warn",
 			},
@@ -82,7 +81,7 @@ func TestParseQuery(t *testing.T) {
 		},
 		{
 			query: `level       ="info"`,
-			expectedFilter: store.LogFilter{
+			expectedFilter: LogFilter{
 				Or:    false,
 				Level: "info",
 			},
@@ -90,12 +89,12 @@ func TestParseQuery(t *testing.T) {
 		},
 		{
 			query: `service=cart&service=auth`,
-			expectedFilter: store.LogFilter{
+			expectedFilter: LogFilter{
 				Or: false,
-				LHS: &store.LogFilter{
+				LHS: &LogFilter{
 					Service: "cart",
 				},
-				RHS: &store.LogFilter{
+				RHS: &LogFilter{
 					Service: "auth",
 				},
 			},
@@ -103,16 +102,16 @@ func TestParseQuery(t *testing.T) {
 		},
 		{
 			query: `level=info|service=auth&service=auth`,
-			expectedFilter: store.LogFilter{
+			expectedFilter: LogFilter{
 				Or: true,
-				LHS: &store.LogFilter{
+				LHS: &LogFilter{
 					Level: "info",
 				},
-				RHS: &store.LogFilter{
-					LHS: &store.LogFilter{
+				RHS: &LogFilter{
+					LHS: &LogFilter{
 						Service: "auth",
 					},
-					RHS: &store.LogFilter{
+					RHS: &LogFilter{
 						Service: "auth",
 					},
 					Or: false,

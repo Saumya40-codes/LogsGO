@@ -9,6 +9,7 @@ import (
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 )
 
 // MemoryStore implements the Store interface using an in-memory map.
@@ -71,21 +72,21 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 	return nil
 }
 
-func (m *MemoryStore) QueryInstant(parse LogFilter, lookback int64, qTime int64) ([]InstantQueryResponse, error) {
-	deduped := make(map[string]InstantQueryResponse)
+func (m *MemoryStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
+	var allResults []InstantQueryResponse
 
-	if parse.LHS == nil && parse.RHS == nil {
+	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
 		for _, logs := range m.logs {
-			if qTime-lookback > logs.Timestamp {
+			if cfg.Ts-cfg.Lookback > logs.Timestamp {
 				break
 			}
-			if logs.Timestamp > qTime {
+			if logs.Timestamp > cfg.Ts {
 				continue
 			}
-			if parse.Service != "" && logs.Service != parse.Service {
+			if cfg.Filter.Service != "" && logs.Service != cfg.Filter.Service {
 				continue
 			}
-			if parse.Level != "" && logs.Level != parse.Level {
+			if cfg.Filter.Level != "" && logs.Level != cfg.Filter.Level {
 				continue
 			}
 
@@ -99,92 +100,71 @@ func (m *MemoryStore) QueryInstant(parse LogFilter, lookback int64, qTime int64)
 				return nil, fmt.Errorf("timestamp %v not found in logKey series", logs.Timestamp)
 			}
 
-			key := logs.Service + "|" + logs.Level + "|" + logs.Message
-			if _, ok := deduped[key]; !ok {
-				deduped[key] = InstantQueryResponse{
-					TimeStamp: logs.Timestamp,
-					Service:   logs.Service,
-					Level:     logs.Level,
-					Message:   logs.Message,
-					Count:     uint64(entry.value),
-				}
-			}
-		}
-	} else if parse.Or {
-		lhsResults, err := m.QueryInstant(*parse.LHS, lookback, qTime)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query LHS: %w", err)
-		}
-		rhsResults, err := m.QueryInstant(*parse.RHS, lookback, qTime)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query RHS: %w", err)
-		}
-		for _, r := range append(lhsResults, rhsResults...) {
-			key := r.Service + "|" + r.Level + "|" + r.Message
-			if _, exists := deduped[key]; !exists {
-				deduped[key] = r
-			}
+			allResults = append(allResults, InstantQueryResponse{
+				TimeStamp: logs.Timestamp,
+				Service:   logs.Service,
+				Level:     logs.Level,
+				Message:   logs.Message,
+				Count:     uint64(entry.value),
+			})
 		}
 	} else {
-		// AND case
-		lhsResults, err := m.QueryInstant(*parse.LHS, lookback, qTime)
+		lhsCfg := cfg
+		lhsCfg.Filter = *cfg.Filter.LHS
+		lhsResults, err := m.QueryInstant(lhsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query LHS: %w", err)
 		}
-		rhsResults, err := m.QueryInstant(*parse.RHS, lookback, qTime)
+
+		rhsCfg := cfg
+		rhsCfg.Filter = *cfg.Filter.RHS
+		rhsResults, err := m.QueryInstant(rhsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query RHS: %w", err)
 		}
-		rhsMap := make(map[string]struct{})
-		for _, r := range rhsResults {
-			key := r.Service + "|" + r.Level + "|" + r.Message
-			rhsMap[key] = struct{}{}
-		}
-		for _, r := range lhsResults {
-			key := r.Service + "|" + r.Level + "|" + r.Message
-			if _, ok := rhsMap[key]; ok {
-				if _, exists := deduped[key]; !exists {
-					deduped[key] = r
+
+		if cfg.Filter.Or {
+			allResults = append(allResults, lhsResults...)
+			allResults = append(allResults, rhsResults...)
+		} else {
+			rhsMap := make(map[string]struct{})
+			for _, r := range rhsResults {
+				key := r.Service + "|" + r.Level + "|" + r.Message
+				rhsMap[key] = struct{}{}
+			}
+			for _, r := range lhsResults {
+				key := r.Service + "|" + r.Level + "|" + r.Message
+				if _, ok := rhsMap[key]; ok {
+					allResults = append(allResults, r)
 				}
 			}
 		}
 	}
 
-	// Now, we merge the results from next store
+	// Merge results from the next store
 	if m.next != nil {
 		if localStore, ok := (*m.next).(*LocalStore); ok {
-			nextResults, err := localStore.QueryInstant(parse, lookback, qTime)
+			nextResults, err := localStore.QueryInstant(cfg)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query next store: %w", err)
 			}
-			for _, r := range nextResults {
-				key := r.Service + "|" + r.Level + "|" + r.Message
-				if _, exists := deduped[key]; !exists {
-					deduped[key] = r
-				}
-			}
+			allResults = append(allResults, nextResults...)
 		} else {
 			return nil, fmt.Errorf("next store is not a LocalStore, cannot query")
 		}
 	}
 
-	final := make([]InstantQueryResponse, 0, len(deduped))
-	for _, v := range deduped {
-		final = append(final, v)
-	}
-
-	sort.Slice(final, func(i, j int) bool {
-		return final[i].TimeStamp < final[j].TimeStamp
-	})
-	return final, nil
+	return deduplicateInstantResponses(allResults), nil
 }
 
 // QueryRange is Instant Query, which is done at several intervals based on the resolution
-func (m *MemoryStore) QueryRange(parse LogFilter, lookback int64, qStart, qEnd, resolution int64) ([]QueryResponse, error) {
+func (m *MemoryStore) QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryResponse, error) {
 	temp := make(map[LogKey][]Series)
+	newInstantCfg := logsgoql.NewInstantQueryConfig(0, cfg.Lookback, cfg.Filter)
 
-	for t := qStart; t <= qEnd; t += resolution {
-		instantResults, err := m.QueryInstant(parse, lookback, t)
+	for t := cfg.StartTs; t <= cfg.EndTs; t += cfg.Resolution {
+		newInstantCfg.Ts = t
+		instantResults, err := m.QueryInstant(newInstantCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query logs: %w", err)
 		}
@@ -327,4 +307,26 @@ func (m *MemoryStore) LabelValues(labels *Labels) error {
 	}
 
 	return nil
+}
+
+func deduplicateInstantResponses(responses []InstantQueryResponse) []InstantQueryResponse {
+	deduped := make(map[string]InstantQueryResponse)
+
+	for _, r := range responses {
+		key := r.Service + "|" + r.Level + "|" + r.Message
+		if _, exists := deduped[key]; !exists {
+			deduped[key] = r
+		}
+	}
+
+	final := make([]InstantQueryResponse, 0, len(deduped))
+	for _, v := range deduped {
+		final = append(final, v)
+	}
+
+	sort.Slice(final, func(i, j int) bool {
+		return final[i].TimeStamp < final[j].TimeStamp
+	})
+
+	return final
 }

@@ -2,13 +2,11 @@ package logsgoql
 
 import (
 	"strings"
-
-	"github.com/Saumya40-codes/LogsGO/pkg/store"
 )
 
-func ParseQuery(query string) (store.LogFilter, error) {
+func ParseQuery(query string) (LogFilter, error) {
 	// This is a very basic parser, it only supports simple queries like "level=error | service=auth"
-	filter := store.LogFilter{}
+	filter := LogFilter{}
 	query = strings.Replace(query, " ", "", -1)
 
 	if !strings.Contains(query, "|") && !strings.Contains(query, "&") {
@@ -19,9 +17,9 @@ func ParseQuery(query string) (store.LogFilter, error) {
 			filter.Level = strings.TrimPrefix(query, "level=")
 		} else {
 			if !strings.Contains(query, "=") {
-				return store.LogFilter{}, store.ErrInvalidQuery
+				return LogFilter{}, ErrInvalidQuery
 			}
-			return store.LogFilter{}, store.ErrInvalidLabel
+			return LogFilter{}, ErrInvalidLabel
 		}
 
 		Filter(&filter)
@@ -35,19 +33,19 @@ func ParseQuery(query string) (store.LogFilter, error) {
 			if query[i] == '|' {
 				filter.Or = true
 			}
-			filter.LHS = &store.LogFilter{}
+			filter.LHS = &LogFilter{}
 			currentOp := query[0:i]
 			if strings.HasPrefix(currentOp, "service=") {
 				filter.LHS.Service = strings.TrimPrefix(currentOp, "service=") // we do check above
 			} else if strings.HasPrefix(currentOp, "level=") {
 				filter.LHS.Level = strings.TrimPrefix(currentOp, "level=")
 			} else {
-				return store.LogFilter{}, store.ErrInvalidLabel
+				return LogFilter{}, ErrInvalidLabel
 			}
 			if i+1 < len(query) {
 				rhs, err := ParseQuery(query[i+1:])
 				if err != nil {
-					return store.LogFilter{}, err
+					return LogFilter{}, err
 				}
 				filter.RHS = &rhs
 			}
@@ -60,7 +58,7 @@ func ParseQuery(query string) (store.LogFilter, error) {
 	return filter, nil
 }
 
-func Filter(filter *store.LogFilter) {
+func Filter(filter *LogFilter) {
 	if filter.Service != "" {
 		filter.Service = FilterQuotes(filter.Service)
 	}
