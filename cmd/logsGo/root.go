@@ -106,7 +106,7 @@ func main() {
 
 	// validate auth paths file during init time only
 	rootCmd.Flags().StringVar(&cfg.PublicKeyPath, "public-key-path", "", "Path to RSA public key for JWT authentication, if set will enable JWT authentication for gRPC and HTTP servers")
-	rootCmd.Flags().StringVar(&cfg.TLSConfigPath, "tls-config-path", "", "Path to TLS configuration file for gRPC and HTTP servers, if set will enable TLS, goes well with --insecure flag")
+	rootCmd.Flags().StringVar(&cfg.TLSConfigPath, "tls-config-path", "", "Path to TLS configuration file containing cert and key for gRPC and HTTP servers, if set will enable TLS encryption")
 	rootCmd.Flags().SortFlags = true
 
 	if err := rootCmd.Execute(); err != nil {

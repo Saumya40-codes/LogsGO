@@ -6,3 +6,6 @@ pkg/ui/*
 docs
 examples
 client
+Makefile
+README.md
+.github
