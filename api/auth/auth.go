@@ -20,15 +20,34 @@ import (
 )
 
 type TLSConfig struct {
+	Enabled  bool   `yaml:"enabled"`
 	CertFile string `yaml:"cert_file"`
 	KeyFile  string `yaml:"key_file"`
+	CAFile   string `yaml:"ca_file,omitempty"`
+}
+
+type LogClient struct {
+	Config *TLSConfig
+}
+
+type HttpClient struct {
+	Config *TLSConfig
+}
+
+type QueueServer struct {
+	Config *TLSConfig
+}
+
+type Config struct {
+	LogClient  `yaml:"logclient"`
+	HttpClient `yaml:"http"`
 }
 
 type AuthConfig struct {
 	PublicKeyPath string
 	PublicKey     *rsa.PublicKey
 	TLSConfigPath string
-	TLSCfg        *TLSConfig
+	TLSCfg        *Config
 }
 
 func JwtInterceptor(pubKey *rsa.PublicKey) grpc.UnaryServerInterceptor {
@@ -120,7 +139,7 @@ func ParsePublicKeyFile(path string) (*rsa.PublicKey, error) {
 	return pubKey, nil
 }
 
-func ParseTLSConfig(path string) (*TLSConfig, error) {
+func ParseTLSConfig(path string) (*Config, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -131,12 +150,9 @@ func ParseTLSConfig(path string) (*TLSConfig, error) {
 	}
 	defer file.Close()
 
-	tlsConfig := &TLSConfig{}
+	tlsConfig := &Config{}
 	if err := yaml.NewDecoder(file).Decode(tlsConfig); err != nil {
 		return nil, errors.New("failed to decode TLS config: " + err.Error())
-	}
-	if tlsConfig.CertFile == "" || tlsConfig.KeyFile == "" {
-		return nil, errors.New("TLS config must contain cert_file and key_file")
 	}
 	return tlsConfig, nil
 }

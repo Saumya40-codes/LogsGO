@@ -1,2 +1,10 @@
-cert_file: certs/serv.crt
-key_file: certs/serv.key
+logclient:
+  cert_file: certs/logclient/serv.crt
+  key_file: certs/logclient/serv.key
+http:
+  cert_file: certs/http/serv.crt
+  key_file: certs/http/serv.key
+queue:
+  cert_file: certs/queue/client.crt
+  key_file:  certs/queue/client.key
+  ca_file:   certs/queue/ca.crt
