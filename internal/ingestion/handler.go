@@ -107,8 +107,11 @@ func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, auth
 		grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(auth.JwtInterceptor(authConfig.PublicKey)))
 	}
 
-	if authConfig.TLSConfigPath != "" && authConfig.TLSCfg != nil {
-		creds, err := auth.GetTLSCredentials(authConfig.TLSCfg)
+	if authConfig.TLSCfg != nil && authConfig.TLSCfg.LogClient.Config != nil && authConfig.TLSCfg.LogClient.Config.Enabled {
+		if authConfig.TLSCfg.LogClient.Config.CertFile == "" || authConfig.TLSCfg.LogClient.Config.KeyFile == "" {
+			log.Fatalf("log client tls config should have certfile and keyfile location")
+		}
+		creds, err := auth.GetTLSCredentials(authConfig.TLSCfg.LogClient.Config)
 		if err != nil {
 			log.Fatalf("failed to get TLS credentials: %v", err)
 		}

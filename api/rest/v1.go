@@ -132,13 +132,13 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 	go func() {
 		var servErr error
 
-		if authCfg.TLSCfg != nil && authCfg.TLSConfigPath != "" {
-			if _, err := os.Stat(authCfg.TLSCfg.CertFile); os.IsNotExist(err) {
-				log.Fatalf("TLS cert not found: %s", authCfg.TLSCfg.CertFile)
+		if authCfg.TLSCfg != nil && authCfg.TLSCfg.HttpClient.Config != nil && authCfg.TLSCfg.HttpClient.Config.Enabled {
+			if _, err := os.Stat(authCfg.TLSCfg.HttpClient.Config.CertFile); os.IsNotExist(err) {
+				log.Fatalf("TLS cert not found: %s", authCfg.TLSCfg.HttpClient.Config.CertFile)
 			}
-			log.Printf("Using TLS cert: %s", authCfg.TLSCfg.CertFile)
+			log.Printf("Using TLS cert: %s", authCfg.TLSCfg.HttpClient.Config.CertFile)
 
-			servErr = srv.ListenAndServeTLS(authCfg.TLSCfg.CertFile, authCfg.TLSCfg.KeyFile)
+			servErr = srv.ListenAndServeTLS(authCfg.TLSCfg.HttpClient.Config.CertFile, authCfg.TLSCfg.HttpClient.Config.KeyFile)
 		} else {
 			servErr = srv.ListenAndServe()
 		}
