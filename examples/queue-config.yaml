@@ -1,0 +1,4 @@
+queue:
+  url: # rabbitmq server url
+  name: # name of the log queue
+  numWorkers: # optional, number of worker to distribute tasks to in round-robin fashion, if not set defaults to 1

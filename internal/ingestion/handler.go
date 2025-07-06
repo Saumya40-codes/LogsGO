@@ -10,6 +10,7 @@ import (
 
 	"github.com/Saumya40-codes/LogsGO/api/auth"
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
+	"github.com/Saumya40-codes/LogsGO/internal/queue"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
@@ -56,44 +57,12 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir).WithCompactL0OnClose(true).WithValueLogFileSize(16 << 20)
 	badgerOpts.Logger = nil
 
-	shardIndex := store.NewShardedLogIndex()
-
-	// s3 store, if configured
-	var bucketStore *store.BucketStore
-	var err error
-	if factory.StoreConfigPath != "" {
-		bucketStore, err = store.NewBucketStore(ctx, factory.StoreConfigPath, "", shardIndex)
-	} else if factory.StoreConfig != "" {
-		bucketStore, err = store.NewBucketStore(ctx, "", factory.StoreConfig, shardIndex)
-	}
-	if err != nil {
-		log.Fatalf("failed to create bucket store from give configuration %v", err)
-	}
-
-	var nextStoreS3 store.Store
-	if bucketStore != nil {
-		nextStoreS3 = bucketStore
-	}
-
-	var localStore *store.LocalStore
-	if nextStoreS3 != nil {
-		localStore, err = store.NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex)
-	} else {
-		localStore, err = store.NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex)
-	}
-	if err != nil {
-		log.Fatalf("failed to create local store: %v", err)
-	}
-	var nextStore store.Store = localStore
-
-	// memory store
-	memStore := store.NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.FlushOnExit, shardIndex) // internally creates a goroutine to flush logs periodically
-	var headStore store.Store = memStore
+	headStore := store.GetStoreChain(ctx, factory, badgerOpts)
 	server.Store = headStore
 	return server
 }
 
-func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, authConfig auth.AuthConfig) {
+func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, authConfig auth.AuthConfig, qCfg *pkg.QueueConfig) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen on port 50051: %v", err)
@@ -131,13 +100,36 @@ func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, auth
 		}
 	}()
 
-	// Wait for cancellation or signal
+	var wg sync.WaitGroup
+
+	if qCfg != nil {
+		cfg := qCfg.Queue
+		if cfg.QueueName == "" || cfg.QueueURL == "" {
+			log.Fatal("provided queue config doesn't contain all necessary fields: name or url is missing")
+		}
+		if cfg.QueueWorkers == 0 {
+			cfg.QueueWorkers = 1 // default is 1
+		}
+
+		wg.Add(int(cfg.QueueWorkers))
+		for i := 0; i < int(cfg.QueueWorkers); i++ {
+			go func(workerID int) {
+				defer wg.Done()
+				queue.StartWorker(ctx, *qCfg, serv.Store, workerID)
+			}(i + 1)
+		}
+	}
+
 	<-ctx.Done()
 	log.Println("Context cancelled. Shutting down...")
 	s.GracefulStop()
 	time.Sleep(2 * time.Second) // looks safe
 	serv.Store.Close()
 	log.Println("Server exited")
+	wg.Wait()
+	if qCfg != nil {
+		log.Println("Queue workers closed...")
+	}
 	time.Sleep(1 * time.Second)
 }
 

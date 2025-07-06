@@ -23,6 +23,15 @@ type IngestionFactory struct {
 	LocalStoreFlushDuration string
 	PublicKeyPath           string
 	TLSConfigPath           string
+	QueueConfigPath         string
+}
+
+type QueueConfig struct {
+	Queue struct {
+		QueueURL     string `yaml:"url"`
+		QueueWorkers uint   `yaml:"numWorkers"`
+		QueueName    string `yaml:"name"`
+	} `yaml:"queue"`
 }
 
 func NewIngestionFactory(dir string, maxRetention string, maxTimeInMem string) *IngestionFactory {
