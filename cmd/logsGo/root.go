@@ -13,6 +13,7 @@ import (
 	"github.com/Saumya40-codes/LogsGO/api/auth"
 	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
+	"github.com/Saumya40-codes/LogsGO/internal/queue"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/spf13/cobra"
 )
@@ -66,10 +67,15 @@ var rootCmd = &cobra.Command{
 		}
 		authConfig.TLSCfg = tlsCfg
 
+		qCfg, err := queue.ParseQueueConfig(cfg.QueueConfigPath)
+		if err != nil {
+			log.Fatalf("failed to parse queue config file: %v", err)
+		}
+
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			ingestion.StartServer(ctx, serv, cfg.GrpcListenAddr, authConfig)
+			ingestion.StartServer(ctx, serv, cfg.GrpcListenAddr, authConfig, qCfg)
 		}()
 
 		go func() {
@@ -107,6 +113,7 @@ func main() {
 	// validate auth paths file during init time only
 	rootCmd.Flags().StringVar(&cfg.PublicKeyPath, "public-key-path", "", "Path to RSA public key for JWT authentication, if set will enable JWT authentication for gRPC and HTTP servers")
 	rootCmd.Flags().StringVar(&cfg.TLSConfigPath, "tls-config-path", "", "Path to TLS configuration file containing cert and key for gRPC and HTTP servers, if set will enable TLS encryption")
+	rootCmd.Flags().StringVar(&cfg.QueueConfigPath, "queue-config-path", "", "Path to your message queue configuration file, if used. Should contain: name*, url* and numWorkers to distribute tasks (optional, default:1)")
 	rootCmd.Flags().SortFlags = true
 
 	if err := rootCmd.Execute(); err != nil {

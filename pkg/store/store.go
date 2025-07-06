@@ -1,12 +1,16 @@
 package store
 
 import (
+	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
+	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
+	"github.com/dgraph-io/badger/v4"
 )
 
 // Store interfaces defines the methods that any store implementation should provide.
@@ -63,6 +67,44 @@ type LogKey struct {
 
 type CounterValue struct {
 	value uint64
+}
+
+func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpts badger.Options) Store {
+	shardIndex := NewShardedLogIndex()
+
+	// s3 store, if configured
+	var bucketStore *BucketStore
+	var err error
+	if factory.StoreConfigPath != "" {
+		bucketStore, err = NewBucketStore(ctx, factory.StoreConfigPath, "", shardIndex)
+	} else if factory.StoreConfig != "" {
+		bucketStore, err = NewBucketStore(ctx, "", factory.StoreConfig, shardIndex)
+	}
+	if err != nil {
+		log.Fatalf("failed to create bucket store from give configuration %v", err)
+	}
+
+	var nextStoreS3 Store
+	if bucketStore != nil {
+		nextStoreS3 = bucketStore
+	}
+
+	var localStore *LocalStore
+	if nextStoreS3 != nil {
+		localStore, err = NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex)
+	} else {
+		localStore, err = NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex)
+	}
+	if err != nil {
+		log.Fatalf("failed to create local store: %v", err)
+	}
+	var nextStore Store = localStore
+
+	// memory store
+	memStore := NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.FlushOnExit, shardIndex) // internally creates a goroutine to flush logs periodically
+	var headStore Store = memStore
+
+	return headStore
 }
 
 func Contains(slice []string, item string) bool {
