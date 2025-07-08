@@ -46,8 +46,13 @@
     })
   ```
 
-       
+
 - **Configurable flush intervals** for controlling when logs are forwarded from one store to the next.
+
+- **Support to upload logs to Message Queue(RabbitMQ) First**: You can opt-in to upload batches of your logs to message queue which later gets picked up by `N` logsGo ingestion workers in default *round-robin* manner, as configured. 
+
+  Here is how an ideal flow *can* look:
+  ![Queueing Model](docs/logs-queueing.png)
 
 ---
 

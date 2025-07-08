@@ -1,0 +1,64 @@
+networks:
+  logsgo:
+    name: logsgo
+
+services:
+  logsGo:
+    image: saumyashah40/logsgo:dev
+    container_name: logsgo
+    networks:
+      - logsgo
+    ports:
+      - "19091:19091"
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - ../store_config.yaml:/etc/logsgo/store_config.yaml
+      - ./data:/data
+      - ./queue-config.yaml:/etc/logsgo/queue-config.yaml
+    command:
+      - --store-config-path=/etc/logsgo/store_config.yaml
+      - --queue-config-path=/etc/logsgo/queue-config.yaml
+      - --web-listen-addr=0.0.0.0:19091
+      - --grpc-listen-addr=0.0.0.0:50051
+      - --http-listen-addr=0.0.0.0:8080  # As this is a demo, we can do expose it to all interfaces :)
+      - --max-time-in-mem=4m # Again, demo we have few logs so this is okkk
+      - --max-retention-time=8m # We'll have nearly all logs in s3 within 10 min, again as a part of this demo :D
+    depends_on:
+      - rabbitmq
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    networks:
+      - logsgo
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - ./minio_data:/data
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - logsgo
+    container_name: rabbitmq
+
+  example_app:
+    image: saumyashah40/logsgo-example:latest
+    container_name: example_app
+    networks:
+      - logsgo
+    depends_on:
+      - logsGo
+      - minio
+      - rabbitmq
+    command:
+      - --enable-queue
