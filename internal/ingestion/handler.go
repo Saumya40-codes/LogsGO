@@ -199,6 +199,10 @@ func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]store.QueryResponse, 
 	return logs, nil
 }
 
+func (s *LogIngestorServer) IsReady() bool {
+	return s.Store != nil
+}
+
 func changeToQueryResponse(logs []store.InstantQueryResponse) []store.QueryResponse {
 	queryResp := make([]store.QueryResponse, len(logs))
 	for i, log := range logs {

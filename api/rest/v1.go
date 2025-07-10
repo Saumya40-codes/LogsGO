@@ -120,6 +120,20 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 
 			g.JSON(http.StatusOK, respLabels)
 		})
+
+		// health e.p. liveness
+		api.GET("/healthz", func(g *gin.Context) {
+			g.Status(http.StatusOK)
+		})
+
+		// readiness
+		api.GET("/readyz", func(g *gin.Context) {
+			if !logServer.IsReady() {
+				g.JSON(http.StatusServiceUnavailable, gin.H{"error": "not ready"})
+				return
+			}
+			g.Status(http.StatusOK)
+		})
 	}
 
 	srv := &http.Server{
