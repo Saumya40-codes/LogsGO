@@ -43,7 +43,7 @@ spec:
           ports:
             {{- range .Values.service.ports }}
             - name: {{ .name }}
-              containerPort: {{ .port }}
+              containerPort: {{ .targetPort }}
             {{- end }}
           command: ["./logsGo"]
           args:
