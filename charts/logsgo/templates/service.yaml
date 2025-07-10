@@ -12,6 +12,6 @@ spec:
       port: {{ .port }}
       targetPort: {{ .targetPort }}
       protocol: TCP
-    {{ - end }}
+    {{- end }}
   selector:
     {{- include "logsgo.selectorLabels" . | nindent 4 }}
