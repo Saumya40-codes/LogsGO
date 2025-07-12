@@ -270,19 +270,18 @@ func (b *BucketStore) LabelValues(labels *Labels) error {
 func (b *BucketStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
 	cfg.Cache.BucketOnce.Do(func() {
 		b.fetchLogs(&cfg.Cache.BucketData)
+		slices.SortFunc(cfg.Cache.BucketData, func(a, b *logapi.Series) int {
+			if a.Entry.Timestamp < b.Entry.Timestamp {
+				return 1
+			}
+			if a.Entry.Timestamp > b.Entry.Timestamp {
+				return -1
+			}
+			return 0
+		})
 	})
 
 	var result []InstantQueryResponse
-
-	slices.SortFunc(cfg.Cache.BucketData, func(a, b *logapi.Series) int {
-		if a.Entry.Timestamp < b.Entry.Timestamp {
-			return 1
-		}
-		if a.Entry.Timestamp > b.Entry.Timestamp {
-			return -1
-		}
-		return 0
-	})
 
 	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
 		for _, log := range cfg.Cache.BucketData {

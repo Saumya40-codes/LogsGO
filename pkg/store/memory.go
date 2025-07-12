@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"sort"
@@ -76,11 +77,14 @@ func (m *MemoryStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQ
 	var allResults []InstantQueryResponse
 
 	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
-		for _, logs := range m.logs {
+		startIdx := getStartingTimeIndex(m.logs, cfg.Ts)
+
+		for idx := startIdx; idx < len(m.logs); idx++ {
+			logs := m.logs[idx]
 			if cfg.Ts-cfg.Lookback > logs.Timestamp {
 				break
 			}
-			if logs.Timestamp > cfg.Ts {
+			if logs.Timestamp > cfg.Ts { // this won't be needed as we only consider logs with Ts <= cfg.Ts, but lets keep it for sanity
 				continue
 			}
 			if cfg.Filter.Service != "" && logs.Service != cfg.Filter.Service {
@@ -202,13 +206,17 @@ func (m *MemoryStore) Flush() error {
 	defer m.mu.Unlock()
 	var logsToBeFlushed []*logapi.LogEntry
 	var logsToKeep []*logapi.LogEntry
-	for _, logs := range m.logs {
-		if time.Now().Unix()-logs.Timestamp >= int64(m.maxTimeInMemory.Seconds()) { // TODO: think of some better scheduling, currently there might be case that logs just miss out by few seconds to be flushed and will be in memory for longer time
-			logsToBeFlushed = append(logsToBeFlushed, logs)
-		} else {
-			logsToKeep = append(logsToKeep, logs)
-		}
+	currT := time.Now().Unix()
+	maxThreshold := currT - int64(m.maxTimeInMemory.Seconds())
+
+	// YOLO
+	if maxThreshold < 0 {
+		return errors.New("Invalid maxTimeInMemory parameter set")
 	}
+
+	thresholdIdx := getStartingTimeIndex(m.logs, maxThreshold)
+	logsToBeFlushed = m.logs[thresholdIdx:]
+	logsToKeep = m.logs[:thresholdIdx]
 
 	if len(logsToBeFlushed) == 0 {
 		return nil // No logs to flush

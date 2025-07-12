@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -142,4 +143,11 @@ func validateConfiguration(config BucketStoreConfig) error {
 
 func getNextTimeStamp(current int64, base time.Duration) int64 {
 	return current + time.Unix(int64(base.Seconds()), 0).Unix()
+}
+
+// our logs are sorted during query and flushing time, we can use this fact to not to query all logs and use binary search
+func getStartingTimeIndex(logs []*logapi.LogEntry, Ts int64) int {
+	return sort.Search(len(logs), func(i int) bool {
+		return logs[i].Timestamp <= Ts
+	})
 }
