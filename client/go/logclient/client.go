@@ -29,6 +29,22 @@ type QueueOpts struct {
 	Url       string
 }
 
+type LogOpts struct {
+	// Service is the name of the service that is sending the log
+	Service string
+	// Level is the log level (e.g., INFO, ERROR, DEBUG)
+	Level string
+	// Message is the log message
+	Message string
+	// Timestamp is the time when the log was created, if not provided it will be set to current time in Unix format
+	Timestamp int64
+}
+
+type LogBatch struct {
+	// Entries is a slice of LogOpts to be uploaded
+	Entries []*LogOpts
+}
+
 // NewClient creates a new gRPC client to the log server.
 // Addr paramter should contain the address at which logsGo gRPC server is running (which is :50051 by default)
 func NewLogClient(ctx context.Context, addr string) (*Client, error) {
@@ -128,7 +144,7 @@ func (c *Client) Close() error {
 }
 
 // UploadLog sends a log entry to the server.
-func (c *Client) UploadLog(ctx context.Context, entry *logapi.LogEntry) error {
+func (c *Client) UploadLog(ctx context.Context, entry *LogOpts) error {
 	if entry == nil {
 		return errors.New("no options provided for log upload")
 	}
@@ -139,7 +155,15 @@ func (c *Client) UploadLog(ctx context.Context, entry *logapi.LogEntry) error {
 		entry.Timestamp = time.Now().Unix()
 	}
 
-	res, err := c.client.UploadLog(ctx, entry)
+	// Convert LogOpts to proto supported LogEntry
+	logEntry := &logapi.LogEntry{
+		Service:   entry.Service,
+		Level:     entry.Level,
+		Message:   entry.Message,
+		Timestamp: entry.Timestamp,
+	}
+
+	res, err := c.client.UploadLog(ctx, logEntry)
 	if err != nil {
 		return err
 	}
@@ -155,12 +179,24 @@ func (c *Client) UploadLog(ctx context.Context, entry *logapi.LogEntry) error {
 }
 
 // UploadLogs performs a batch upload, same as UploadLog but accepts slice of LogEntry to upload
-func (c *Client) UploadLogs(ctx context.Context, entries *logapi.LogBatch) error {
+func (c *Client) UploadLogs(ctx context.Context, entries *LogBatch) error {
 	if err := ValidateLogs(entries); err != nil {
 		return err
 	}
 
-	res, err := c.client.UploadLogs(ctx, entries)
+	// Convert LogBatch to proto supported LogBatch
+	logEntries := make([]*logapi.LogEntry, len(entries.Entries))
+	for i, entry := range entries.Entries {
+		entryProto, err := convertLogOptsToProto(entry)
+		if err != nil {
+			return fmt.Errorf("failed to convert log entry to proto: %w", err)
+		}
+		logEntries[i] = entryProto
+	}
+
+	res, err := c.client.UploadLogs(ctx, &logapi.LogBatch{
+		Entries: logEntries,
+	})
 	if err != nil {
 		return err
 	}
@@ -175,12 +211,25 @@ func (c *Client) UploadLogs(ctx context.Context, entries *logapi.LogBatch) error
 	return nil
 }
 
-func (c *Client) UploadLogsToQueue(ctx context.Context, entries *logapi.LogBatch) error {
+func (c *Client) UploadLogsToQueue(ctx context.Context, entries *LogBatch) error {
 	if err := ValidateLogs(entries); err != nil {
 		return err
 	}
 
-	marshalLogs, err := proto.Marshal(entries)
+	// Convert LogBatch to proto supported LogBatch
+	logEntries := make([]*logapi.LogEntry, len(entries.Entries))
+	for i, entry := range entries.Entries {
+		entryProto, err := convertLogOptsToProto(entry)
+		if err != nil {
+			return fmt.Errorf("failed to convert log entry to proto: %w", err)
+		}
+		logEntries[i] = entryProto
+	}
+
+	marshalLogs, err := proto.Marshal(&logapi.LogBatch{
+		Entries: logEntries,
+	})
+
 	if err != nil {
 		return err
 	}
@@ -204,14 +253,32 @@ func (c *Client) UploadLogsToQueue(ctx context.Context, entries *logapi.LogBatch
 	return nil
 }
 
+func convertLogOptsToProto(entry *LogOpts) (*logapi.LogEntry, error) {
+	if entry == nil {
+		return nil, errors.New("log entry cannot be nil")
+	}
+	if entry.Timestamp == 0 {
+		entry.Timestamp = time.Now().Unix()
+	}
+	return &logapi.LogEntry{
+		Service:   entry.Service,
+		Level:     entry.Level,
+		Message:   entry.Message,
+		Timestamp: entry.Timestamp,
+	}, nil
+}
+
 // Reusable function to validate log entries before upload
 // This function checks if the log entries are valid and sets the timestamp to current value if not provided.
-func ValidateLogs(entries *logapi.LogBatch) error {
+func ValidateLogs(entries *LogBatch) error {
 	if entries == nil || len(entries.Entries) == 0 {
 		return errors.New("no options provided for log upload")
 	}
 
 	for _, entry := range entries.Entries {
+		if entry == nil {
+			return errors.New("log entry cannot be nil")
+		}
 		if entry.Message == "" || entry.Service == "" || entry.Level == "" {
 			return errors.New("log entry must contain Service, Level, and Message fields")
 		}

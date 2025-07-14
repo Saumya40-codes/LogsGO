@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Saumya40-codes/LogsGO/api/auth"
-	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
@@ -88,7 +87,7 @@ func TestGRPCConn(t *testing.T) {
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
 
-	opts := &logapi.LogEntry{
+	opts := &LogOpts{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
@@ -111,7 +110,7 @@ func TestDirCreated(t *testing.T) {
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
 
-	opts := &logapi.LogEntry{
+	opts := &LogOpts{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
@@ -152,7 +151,7 @@ func TestLabelValues(t *testing.T) {
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
 
-	opts := &logapi.LogEntry{
+	opts := &LogOpts{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
@@ -217,7 +216,7 @@ func TestQueryOutput(t *testing.T) {
 
 	time.Sleep(2 * time.Second) // wait for servers
 
-	opts := &logapi.LogEntry{
+	opts := &LogOpts{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
@@ -288,13 +287,13 @@ func TestLogDataUploadToS3(t *testing.T) {
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
 
-	opts := &logapi.LogEntry{
+	opts := &LogOpts{
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
 	}
 
-	newOpt := &logapi.LogEntry{
+	newOpt := &LogOpts{
 		Message: "Notification has been sent",
 		Level:   "info",
 		Service: "myService",
@@ -367,7 +366,7 @@ func TestRangeQueries(t *testing.T) {
 	time.Sleep(2 * time.Second) // wait for servers
 	startTs := time.Now()
 
-	opts := &logapi.LogEntry{
+	opts := &LogOpts{
 		Message:   "Time duration execeeded",
 		Level:     "warn",
 		Service:   "ap-south1",
@@ -424,4 +423,45 @@ func TestRangeQueries(t *testing.T) {
 
 	testutil.Assert(t, queryOutput[0].Series[2].Timestamp == queryStart+30*60, "Expected log timestamp to be %d, got %d", queryStart+30*60, queryOutput[0].Series[2].Timestamp)
 	testutil.Assert(t, queryOutput[0].Series[2].Count == 3, "Expected log counter to have value 3, got %d", queryOutput[0].Series[2].Count)
+}
+
+func TestUploadsBatch(t *testing.T) {
+	factory.DataDir = t.TempDir()
+	ctx := t.Context()
+	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, &factory, authConfig)
+
+	time.Sleep(2 * time.Second) // wait for servers
+
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	testutil.Ok(t, err)
+
+	// Upload single log
+	opts := &LogOpts{
+		Message: "Single log message",
+		Level:   "info",
+		Service: "testService",
+	}
+	testutil.Ok(t, lc.UploadLog(ctx, opts), "Failed to upload single log")
+
+	// Upload batch of logs
+	batch := &LogBatch{
+		Entries: []*LogOpts{
+			{Message: "Batch log 1", Level: "error", Service: "batchService"},
+			{Message: "Batch log 2", Level: "debug", Service: "batchService"},
+		},
+	}
+	testutil.Ok(t, lc.UploadLogs(ctx, batch), "Failed to upload batch of logs")
+
+	time.Sleep(2 * time.Second) // wait for logs to be processed
+
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=service="testService"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "info", Service: "testService", Message: "Single log message", Count: 1},
+	})
+
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=service="batchService"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "error", Service: "batchService", Message: "Batch log 1", Count: 1},
+		{Level: "debug", Service: "batchService", Message: "Batch log 2", Count: 1},
+	})
 }
