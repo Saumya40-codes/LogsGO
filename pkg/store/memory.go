@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"sort"
 	"sync"
@@ -227,6 +228,7 @@ func (m *MemoryStore) Flush() error {
 			if err := localStore.Insert(logsToBeFlushed, m.series); err != nil {
 				return fmt.Errorf("failed to insert logs into next store: %w", err)
 			}
+			log.Printf("Flushed %d logs to disk.\n", len(logsToBeFlushed))
 		} else {
 			return fmt.Errorf("next store is not a LocalStore, cannot insert logs")
 		}
