@@ -1,0 +1,47 @@
+networks:
+  logsgo:
+    name: logsgo
+
+services:
+  logsGo:
+    image: saumyashah40/logsgo:dev
+    container_name: logsgo
+    networks:
+      - logsgo
+    ports:
+      - "19091:19091"
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - ./data:/data
+      - ./queue-config.yaml:/etc/logsgo/queue-config.yaml
+    command:
+      - --queue-config-path=/etc/logsgo/queue-config.yaml
+      - --web-listen-addr=0.0.0.0:19091
+      - --grpc-listen-addr=0.0.0.0:50051
+      - --http-listen-addr=0.0.0.0:8080
+      - --max-time-in-mem=4m
+      - --max-retention-time=10m
+    depends_on:
+      - rabbitmq
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - logsgo
+    container_name: rabbitmq
+
+  bench_logsgo:
+    image: saumyashah40/benchtest_logsgo
+    container_name: benchtest_logsgo
+    networks:
+      - logsgo
+    depends_on:
+      - logsGo
+      - rabbitmq
+    command:
+      - --enable-queue
+

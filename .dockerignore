@@ -3,10 +3,11 @@ pkg/ui/*
 !pkg/ui/dist/**
 !pkg/ui/static.go
 
-docs
-examples
-client
+docs/
+examples/
+client/
 Makefile
 README.md
 .github
-charts
+charts/
+bench/

@@ -1,0 +1,5 @@
+queue:
+  url: "amqp://guest:guest@rabbitmq:5672/"
+  name: logsgo
+  numWorkers: 4
+
