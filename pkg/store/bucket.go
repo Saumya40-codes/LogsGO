@@ -431,3 +431,9 @@ func (b *BucketStore) UpdateMetaData(labels *Labels) error {
 	log.Println("Updated metadata in S3")
 	return nil
 }
+
+// perform compaction i.e. merges various small 2h blocks into bigger ones
+// perform downsampling i.e. if logs appear in frequest small intervals i.e. 1s 5s 10s, merge it into one 15s interval
+func (b *BucketStore) RunCompact() {
+
+}
