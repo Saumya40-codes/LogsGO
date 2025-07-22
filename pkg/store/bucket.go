@@ -130,6 +130,8 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	// now here have a dedicated file kinda thing for each entry won't make sense.
 	// we will create a chunks of 2h worth of data
 
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if len(logs) == 0 {
 		log.Println("No log to insert, skipping this cycle")
 		return nil
@@ -151,7 +153,8 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	batches := &logapi.SeriesBatch{
 		Entries: make([]*logapi.Series, 0),
 	}
-	key := fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, logs[0].Service)
+	// newer blocks will always be at level 0 retention
+	key := fmt.Sprintf("%d-%d/%s_L0.pb", baseTimeStamp, nextTimeStamp, logs[0].Service)
 
 	// get metadata
 	metaData, err := b.GetMetaData()
@@ -174,7 +177,8 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 			baseTimeStamp = log.Timestamp
 			nextTimeStamp = getNextTimeStamp(baseTimeStamp, 2*time.Hour)
 
-			key = fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, log.Service)
+			// newer blocks will always be at level 0 retention
+			key = fmt.Sprintf("%d-%d/%s_L0.pb", baseTimeStamp, nextTimeStamp, log.Service)
 		}
 
 		logkey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
