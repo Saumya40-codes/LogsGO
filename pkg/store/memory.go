@@ -12,6 +12,8 @@ import (
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
+	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // MemoryStore implements the Store interface using an in-memory map.
@@ -26,9 +28,10 @@ type MemoryStore struct {
 	series          map[LogKey]map[int64]CounterValue
 	index           *ShardedLogIndex // shared log index
 	meta            Labels           // contains all unique labels for this store, this is used to get unique label values
+	metrics         *metrics.Metrics
 }
 
-func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index *ShardedLogIndex) *MemoryStore {
+func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) *MemoryStore {
 	mstore := &MemoryStore{
 		logs:            make([]*logapi.LogEntry, 0),
 		mu:              sync.Mutex{},
@@ -43,6 +46,7 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index
 			Services: make(map[string]int),
 			Levels:   make(map[string]int),
 		},
+		metrics: metrics,
 	}
 
 	go mstore.startFlushTimer()
@@ -52,6 +56,10 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index
 func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]CounterValue) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	timer := prometheus.NewTimer(m.metrics.IngestionDuration.WithLabelValues("memory"))
+	defer timer.ObserveDuration()
+
 	m.logs = append(m.logs, logs...)
 
 	for _, log := range logs {
@@ -71,6 +79,9 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 	sort.Slice(m.logs, func(i, j int) bool {
 		return m.logs[j].Timestamp < m.logs[i].Timestamp
 	})
+
+	m.metrics.LogsIngested.WithLabelValues("memory").Add(float64(len(logs)))
+	m.metrics.CurrentLogsIngested.WithLabelValues("memory").Set(float64(len(m.logs)))
 	return nil
 }
 
@@ -210,9 +221,11 @@ func (m *MemoryStore) Flush() error {
 	currT := time.Now().Unix()
 	maxThreshold := currT - int64(m.maxTimeInMemory.Seconds())
 
+	timer := prometheus.NewTimer(m.metrics.FlushDuration.WithLabelValues("memory", "local"))
+	defer timer.ObserveDuration()
 	// YOLO
 	if maxThreshold < 0 {
-		return errors.New("Invalid maxTimeInMemory parameter set")
+		return errors.New("invalid maxTimeInMemory parameter set")
 	}
 
 	thresholdIdx := getStartingTimeIndex(m.logs, maxThreshold)
@@ -229,15 +242,16 @@ func (m *MemoryStore) Flush() error {
 				return fmt.Errorf("failed to insert logs into next store: %w", err)
 			}
 			log.Printf("Flushed %d logs to disk.\n", len(logsToBeFlushed))
+			m.metrics.LogsFlushed.WithLabelValues("memory", "local").Add(float64(len(logsToBeFlushed)))
 		} else {
 			return fmt.Errorf("next store is not a LocalStore, cannot insert logs")
 		}
 	}
 
 	m.logs = logsToKeep
+	m.metrics.CurrentLogsIngested.WithLabelValues("memory").Set(float64(len(logsToKeep)))
 
 	for _, log := range logsToBeFlushed {
-
 		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
 		if _, ok := m.series[logKey]; ok {
 			if _, ok := m.series[logKey][log.Timestamp]; ok {

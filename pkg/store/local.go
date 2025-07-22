@@ -16,7 +16,9 @@ import (
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
+	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/dgraph-io/badger/v4"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // LocalStore implements the Store interface using an persistance kv badgerDB store
@@ -31,9 +33,10 @@ type LocalStore struct {
 	lastFlushTime int64            // Timestamp of the last flush operation
 	index         *ShardedLogIndex // shared log index
 	dataDir       string           // Directory where the local store data is stored
+	metrics       *metrics.Metrics
 }
 
-func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flushOnExit bool, index *ShardedLogIndex) (*LocalStore, error) {
+func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) (*LocalStore, error) {
 	db, err := pkg.OpenDB(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open local store: %w", err)
@@ -48,6 +51,7 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 		lastFlushTime: 0,
 		index:         index,
 		dataDir:       opts.Dir, // Store the directory where the local store data is stored
+		metrics:       metrics,
 	}
 
 	// creata a meta.json file to store all unique labels for this store
@@ -65,6 +69,9 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	timer := prometheus.NewTimer(l.metrics.IngestionDuration.WithLabelValues("local"))
+	defer timer.ObserveDuration()
 
 	// open meta.json file to store all unique labels for this store
 	if len(logs) == 0 {
@@ -105,6 +112,9 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 		metaLabels.Services[log.Service]++
 		metaLabels.Levels[log.Level]++
 	}
+
+	l.metrics.LogsIngested.WithLabelValues("local").Add(float64(len(logs)))
+	l.metrics.CurrentLogsIngested.WithLabelValues("local").Add(float64(len(logs)))
 
 	// Write the updated meta labels to the file
 	if err := writeLabelsToFile(file, metaLabels, l.dataDir); err != nil {
@@ -236,6 +246,8 @@ func (l *LocalStore) QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryResponse
 func (l *LocalStore) Flush() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	timer := prometheus.NewTimer(l.metrics.FlushDuration.WithLabelValues("local", "bucket"))
+	defer timer.ObserveDuration()
 
 	now := time.Now().Unix()
 	var logs []*logapi.LogEntry
@@ -329,6 +341,9 @@ func (l *LocalStore) Flush() error {
 			if err := bucketStore.Insert(logs, series); err != nil {
 				return err
 			}
+
+			l.metrics.LogsFlushed.WithLabelValues("local", "bucket").Add(float64(len(logs)))
+			l.metrics.CurrentLogsIngested.WithLabelValues("local").Add(-float64(len(logs))) // Decrease the current logs ingested count as they are flushed by len(logs) amount
 
 			fmt.Printf("%d logs flushed to bucket store\n", len(logs))
 		}

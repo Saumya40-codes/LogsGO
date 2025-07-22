@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s # we say to scrape every 15 seconds
+  evaluation_interval: 15s # irrelevant here but we say to evaluate every 15 seconds, useful when we use rule managers
+scrape_configs:
+- job_name: logsGo # the name of the job
+  static_configs:
+  - targets:
+        - 127.0.0.1:8080

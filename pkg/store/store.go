@@ -11,6 +11,7 @@ import (
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
+	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/dgraph-io/badger/v4"
 )
 
@@ -70,16 +71,16 @@ type CounterValue struct {
 	value uint64
 }
 
-func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpts badger.Options) Store {
+func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpts badger.Options, metrics *metrics.Metrics) Store {
 	shardIndex := NewShardedLogIndex()
 
 	// s3 store, if configured
 	var bucketStore *BucketStore
 	var err error
 	if factory.StoreConfigPath != "" {
-		bucketStore, err = NewBucketStore(ctx, factory.StoreConfigPath, "", shardIndex)
+		bucketStore, err = NewBucketStore(ctx, factory.StoreConfigPath, "", shardIndex, metrics)
 	} else if factory.StoreConfig != "" {
-		bucketStore, err = NewBucketStore(ctx, "", factory.StoreConfig, shardIndex)
+		bucketStore, err = NewBucketStore(ctx, "", factory.StoreConfig, shardIndex, metrics)
 	}
 	if err != nil {
 		log.Fatalf("failed to create bucket store from give configuration %v", err)
@@ -92,9 +93,9 @@ func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpt
 
 	var localStore *LocalStore
 	if nextStoreS3 != nil {
-		localStore, err = NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex)
+		localStore, err = NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex, metrics)
 	} else {
-		localStore, err = NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex)
+		localStore, err = NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex, metrics)
 	}
 	if err != nil {
 		log.Fatalf("failed to create local store: %v", err)
@@ -102,7 +103,7 @@ func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpt
 	var nextStore Store = localStore
 
 	// memory store
-	memStore := NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.FlushOnExit, shardIndex) // internally creates a goroutine to flush logs periodically
+	memStore := NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.FlushOnExit, shardIndex, metrics) // internally creates a goroutine to flush logs periodically
 	var headStore Store = memStore
 
 	return headStore

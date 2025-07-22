@@ -13,10 +13,12 @@ import (
 	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/efficientgo/core/testutil"
 	"github.com/efficientgo/e2e"
 	e2edb "github.com/efficientgo/e2e/db"
+	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/yaml.v3"
 )
 
@@ -36,6 +38,15 @@ var authConfig = auth.AuthConfig{
 	PublicKey:     nil,
 	TLSConfigPath: "",
 	TLSCfg:        nil,
+}
+
+// prom metrics, meaningless right now in tests but NewServer() calls requires it
+var metricsObj = metrics.NewMetrics()
+var reg *prometheus.Registry
+
+func init() {
+	reg = prometheus.NewRegistry()
+	metricsObj.RegisterMetrics(reg)
 }
 
 // removes s3 related stuff
@@ -81,7 +92,7 @@ func verifyLogs(t *testing.T, url string, expected []expectedLog) {
 func TestGRPCConn(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
 
 	// waiting for server to start
@@ -103,9 +114,9 @@ func TestGRPCConn(t *testing.T) {
 func TestDirCreated(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -144,9 +155,9 @@ func checkDirExists(t *testing.T, path string) {
 func TestLabelValues(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -210,9 +221,9 @@ func AssertLabels(t *testing.T, labels rest.LabelValuesResponse, expectedService
 func TestQueryOutput(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
 
 	time.Sleep(2 * time.Second) // wait for servers
 
@@ -280,9 +291,9 @@ func TestLogDataUploadToS3(t *testing.T) {
 	factory.StoreConfig = string(bktConfig)
 
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -359,9 +370,9 @@ func TestLogDataUploadToS3(t *testing.T) {
 func TestRangeQueries(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
 
 	time.Sleep(2 * time.Second) // wait for servers
 	startTs := time.Now()
@@ -428,9 +439,9 @@ func TestRangeQueries(t *testing.T) {
 func TestUploadsBatch(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory)
+	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig)
+	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
 
 	time.Sleep(2 * time.Second) // wait for servers
 
