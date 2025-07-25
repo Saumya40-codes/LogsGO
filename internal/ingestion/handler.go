@@ -13,6 +13,7 @@ import (
 	"github.com/Saumya40-codes/LogsGO/internal/queue"
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
+	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/grpc"
@@ -47,7 +48,7 @@ type QueryRequest struct {
 	Resolution int64 // during range queries, this is used to determine the resolution of the query
 }
 
-func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *LogIngestorServer {
+func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory, metrics *metrics.Metrics) *LogIngestorServer {
 	server := &LogIngestorServer{
 		shutdown: make(chan struct{}),
 		cfg: GlobalConfig{
@@ -57,7 +58,7 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory) *L
 	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir).WithCompactL0OnClose(true).WithValueLogFileSize(16 << 20)
 	badgerOpts.Logger = nil
 
-	headStore := store.GetStoreChain(ctx, factory, badgerOpts)
+	headStore := store.GetStoreChain(ctx, factory, badgerOpts, metrics)
 	server.Store = headStore
 	return server
 }

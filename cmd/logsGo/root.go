@@ -15,6 +15,8 @@ import (
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/internal/queue"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 )
 
@@ -48,8 +50,12 @@ var rootCmd = &cobra.Command{
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 
+		metricsObj := metrics.NewMetrics()
+		reg := prometheus.NewRegistry()
+		metricsObj.RegisterMetrics(reg)
+
 		wg := &sync.WaitGroup{}
-		serv := ingestion.NewLogIngestorServer(ctx, cfg)
+		serv := ingestion.NewLogIngestorServer(ctx, cfg, metricsObj)
 		authConfig := auth.AuthConfig{
 			PublicKeyPath: cfg.PublicKeyPath,
 			TLSConfigPath: cfg.TLSConfigPath,
@@ -80,7 +86,7 @@ var rootCmd = &cobra.Command{
 
 		go func() {
 			defer wg.Done()
-			rest.StartServer(ctx, serv, cfg, authConfig)
+			rest.StartServer(ctx, serv, cfg, authConfig, reg)
 		}()
 
 		log.Println("Starting logsGo UI")

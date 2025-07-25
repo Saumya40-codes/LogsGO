@@ -15,6 +15,8 @@ import (
 	"github.com/Saumya40-codes/LogsGO/pkg/ui"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type LabelValuesResponse struct {
@@ -22,7 +24,7 @@ type LabelValuesResponse struct {
 	Levels   []string
 }
 
-func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cfg *pkg.IngestionFactory, authCfg auth.AuthConfig) {
+func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cfg *pkg.IngestionFactory, authCfg auth.AuthConfig, reg prometheus.Gatherer) {
 	r := gin.Default()
 
 	allowedOrigins := []string{"http://localhost:5173"}
@@ -135,6 +137,10 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 			g.Status(http.StatusOK)
 		})
 	}
+
+	// prometheus metrics
+	promHandler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+	r.GET("/metrics", gin.WrapH(promHandler))
 
 	srv := &http.Server{
 		Addr:    cfg.HttpListenAddr,

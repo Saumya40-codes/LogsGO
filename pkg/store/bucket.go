@@ -15,8 +15,10 @@ import (
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
+	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 )
@@ -37,14 +39,15 @@ type Config struct {
 }
 
 type BucketStore struct {
-	client *minio.Client
-	mu     sync.Mutex
-	config BucketStoreConfig
-	ctx    context.Context
-	index  *ShardedLogIndex // shared log index
+	client  *minio.Client
+	mu      sync.Mutex
+	config  BucketStoreConfig
+	ctx     context.Context
+	index   *ShardedLogIndex // shared log index
+	metrics *metrics.Metrics
 }
 
-func NewBucketStore(ctx context.Context, path string, storeConfig string, index *ShardedLogIndex) (*BucketStore, error) {
+func NewBucketStore(ctx context.Context, path string, storeConfig string, index *ShardedLogIndex, metrics *metrics.Metrics) (*BucketStore, error) {
 	var configData []byte
 	var err error
 
@@ -70,10 +73,11 @@ func NewBucketStore(ctx context.Context, path string, storeConfig string, index 
 	}
 
 	store := &BucketStore{
-		config: BucketCfg.RemoteStore,
-		mu:     sync.Mutex{},
-		ctx:    ctx,
-		index:  index,
+		config:  BucketCfg.RemoteStore,
+		mu:      sync.Mutex{},
+		ctx:     ctx,
+		index:   index,
+		metrics: metrics,
 	}
 
 	if err = store.InitClient(); err != nil {
@@ -130,8 +134,9 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	// now here have a dedicated file kinda thing for each entry won't make sense.
 	// we will create a chunks of 2h worth of data
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	timer := prometheus.NewTimer(b.metrics.IngestionDuration.WithLabelValues("bucket"))
+	defer timer.ObserveDuration()
+
 	if len(logs) == 0 {
 		log.Println("No log to insert, skipping this cycle")
 		return nil
@@ -210,10 +215,15 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 		}
 	}
 
+	b.metrics.LogsIngested.WithLabelValues("bucket").Add(float64(len(logs)))
+	b.metrics.CurrentLogsIngested.WithLabelValues("bucket").Add(float64(len(logs))) // In all ideal sense, this should be counter, as there won't be flush calls in bucket store
+	// TODO: During compaction(when it will implemented), we should update values to this guage
+
 	return nil
 }
 
 func (b *BucketStore) uploadLogsToStorage(batch *logapi.SeriesBatch, objectName string) error {
+	b.metrics.BucketCalls.Inc()
 	data, err := proto.Marshal(batch)
 	if err != nil {
 		return fmt.Errorf("failed to marshal protobuf: %w", err)
@@ -350,6 +360,7 @@ func (b *BucketStore) QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryRespons
 }
 
 func (b *BucketStore) fetchLogs(logs *[]*logapi.Series) error {
+	b.metrics.BucketCalls.Inc()
 	// var results []*logapi.LogEntry
 	ctx := b.ctx
 
@@ -386,6 +397,7 @@ func (b *BucketStore) fetchLogs(logs *[]*logapi.Series) error {
 }
 
 func (b *BucketStore) GetMetaData() (*Labels, error) {
+	b.metrics.BucketCalls.Inc()
 	labels := &Labels{
 		Services: make(map[string]int),
 		Levels:   make(map[string]int),
@@ -411,6 +423,7 @@ func (b *BucketStore) GetMetaData() (*Labels, error) {
 }
 
 func (b *BucketStore) UpdateMetaData(labels *Labels) error {
+	b.metrics.BucketCalls.Inc()
 	metaFile := "meta.json"
 	data, err := json.Marshal(labels)
 	if err != nil {
