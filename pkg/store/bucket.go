@@ -14,6 +14,7 @@ import (
 	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
+	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/minio/minio-go/v7"
@@ -47,7 +48,7 @@ type BucketStore struct {
 	metrics *metrics.Metrics
 }
 
-func NewBucketStore(ctx context.Context, path string, storeConfig string, index *ShardedLogIndex, metrics *metrics.Metrics) (*BucketStore, error) {
+func NewBucketStore(ctx context.Context, path string, storeConfig string, index *ShardedLogIndex, metrics *metrics.Metrics, compactDuration string, compactConfig string) (*BucketStore, error) {
 	var configData []byte
 	var err error
 
@@ -83,6 +84,21 @@ func NewBucketStore(ctx context.Context, path string, storeConfig string, index 
 	if err = store.InitClient(); err != nil {
 		return nil, err
 	}
+
+	// start the compaction routine
+	log.Println("Starting compaction routine for bucket store")
+	if compactConfig == "" {
+		go store.runCompact(pkg.GetTimeDuration(compactDuration))
+	} else {
+		var compactCfg CompactConfig
+		err = yaml.Unmarshal([]byte(compactConfig), &compactCfg)
+		if err != nil {
+			return nil, err
+		}
+
+		go store.runCompactWithConfig(pkg.GetTimeDuration(compactDuration), compactCfg)
+	}
+
 	return store, nil
 }
 
@@ -158,7 +174,8 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	batches := &logapi.SeriesBatch{
 		Entries: make([]*logapi.Series, 0),
 	}
-	key := fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, logs[0].Service)
+	// newer blocks will always be at level 0 retention
+	key := fmt.Sprintf("%d-%d/%s_0.pb", baseTimeStamp, nextTimeStamp, logs[0].Service)
 
 	// get metadata
 	metaData, err := b.GetMetaData()
@@ -181,7 +198,8 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 			baseTimeStamp = log.Timestamp
 			nextTimeStamp = getNextTimeStamp(baseTimeStamp, 2*time.Hour)
 
-			key = fmt.Sprintf("%d-%d/%s.pb", baseTimeStamp, nextTimeStamp, log.Service)
+			// newer blocks will always be at level 0 retention
+			key = fmt.Sprintf("%d-%d/%s_0.pb", baseTimeStamp, nextTimeStamp, log.Service)
 		}
 
 		logkey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
@@ -394,6 +412,28 @@ func (b *BucketStore) fetchLogs(logs *[]*logapi.Series) error {
 	return nil
 }
 
+func (b *BucketStore) loadSeriesFromBlock(objectKey string) ([]*logapi.Series, error) {
+	ctx := b.ctx
+
+	obj, err := b.client.GetObject(ctx, b.config.Bucket, objectKey, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object %s: %w", objectKey, err)
+	}
+	defer obj.Close()
+
+	data, err := io.ReadAll(obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read object %s: %w", objectKey, err)
+	}
+
+	batch := &logapi.SeriesBatch{}
+	if err := proto.Unmarshal(data, batch); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal data from %s: %w", objectKey, err)
+	}
+
+	return batch.Entries, nil
+}
+
 func (b *BucketStore) GetMetaData() (*Labels, error) {
 	b.metrics.BucketCalls.Inc()
 	labels := &Labels{
@@ -445,4 +485,32 @@ func (b *BucketStore) UpdateMetaData(labels *Labels) error {
 
 	log.Println("Updated metadata in S3")
 	return nil
+}
+
+func (b *BucketStore) runCompact(duration time.Duration) {
+	ticker := time.NewTicker(duration)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			b.RunCompaction()
+		case <-b.ctx.Done():
+			return
+		}
+	}
+}
+
+func (b *BucketStore) runCompactWithConfig(duration time.Duration, config CompactConfig) {
+	ticker := time.NewTicker(duration)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			b.RunCompactionWithConfig(config)
+		case <-b.ctx.Done():
+			return
+		}
+	}
 }

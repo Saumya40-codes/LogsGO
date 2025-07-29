@@ -78,9 +78,9 @@ func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpt
 	var bucketStore *BucketStore
 	var err error
 	if factory.StoreConfigPath != "" {
-		bucketStore, err = NewBucketStore(ctx, factory.StoreConfigPath, "", shardIndex, metrics)
+		bucketStore, err = NewBucketStore(ctx, factory.StoreConfigPath, "", shardIndex, metrics, factory.CompactDuration, factory.CompactConfig)
 	} else if factory.StoreConfig != "" {
-		bucketStore, err = NewBucketStore(ctx, "", factory.StoreConfig, shardIndex, metrics)
+		bucketStore, err = NewBucketStore(ctx, "", factory.StoreConfig, shardIndex, metrics, factory.CompactDuration, factory.CompactConfig)
 	}
 	if err != nil {
 		log.Fatalf("failed to create bucket store from give configuration %v", err)
