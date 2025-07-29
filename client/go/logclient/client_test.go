@@ -30,6 +30,7 @@ var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush m
 	WebListenAddr:    "*",
 	LookbackPeriod:   "15m",
 	GrpcListenAddr:   ":50051",
+	CompactDuration:  "12h", // duration after which compact cycles are run
 }
 
 // override auth config for tests if needed
@@ -475,4 +476,103 @@ func TestUploadsBatch(t *testing.T) {
 		{Level: "error", Service: "batchService", Message: "Batch log 1", Count: 1},
 		{Level: "debug", Service: "batchService", Message: "Batch log 2", Count: 1},
 	})
+}
+
+func TestCompaction(t *testing.T) {
+	// start minio server and also docker env
+	e, err := e2e.NewDockerEnvironment("uploadS3test")
+	testutil.Ok(t, err)
+	t.Cleanup(func() {
+		cleanupFactory()
+		e.Close()
+	})
+
+	m1 := e2edb.NewMinio(e, "minio-1", "default")
+	testutil.Ok(t, e2e.StartAndWaitReady(m1))
+
+	bktConfig, err := yaml.Marshal(store.Config{
+		RemoteStore: store.BucketStoreConfig{
+			Provider:            "minio",
+			Bucket:              "bkt1",
+			CreateBucketOnEmpty: true,
+			Endpoint:            m1.Endpoint("http"),
+			SecretKey:           e2edb.MinioSecretKey,
+			AccessKey:           e2edb.MinioAccessKey,
+		},
+	})
+	testutil.Ok(t, err)
+
+	cfg, err := yaml.Marshal(store.CompactConfig{
+		Level0Retention: 2 * time.Second, // keep L0 in the same state for gigantic 2s
+		Level1Retention: time.Hour,
+		Level2Retention: time.Hour,
+		Level1BatchSize: 2, // just 2 block required to trigger, just to test :)
+		Level2BatchSize: 1,
+	})
+	testutil.Ok(t, err)
+
+	factory.CompactConfig = string(cfg)
+
+	factory.DataDir = t.TempDir()
+	factory.MaxTimeInMem = "1s"
+	factory.MaxRetentionTime = "5s"
+	factory.CompactDuration = "20s"
+	factory.StoreConfig = string(bktConfig)
+
+	ctx := t.Context()
+	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+
+	// waiting for server to start
+	time.Sleep(2 * time.Second)
+
+	opts := &LogOpts{
+		Message: "Time duration execeeded",
+		Level:   "warn",
+		Service: "ap-south1",
+	}
+
+	newOpt := &LogOpts{
+		Message: "Notification has been sent",
+		Level:   "info",
+		Service: "ap-south1",
+	}
+
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	testutil.Ok(t, err)
+
+	err = lc.UploadLog(ctx, opts)
+	testutil.Ok(t, err, "logs can't be uploaded")
+
+	testutil.Ok(t, lc.UploadLog(ctx, opts), "logs can't be uploaded")
+	time.Sleep(5 * time.Second)
+
+	testutil.Ok(t, lc.UploadLog(ctx, newOpt), "logs can't be uploaded")
+
+	queryEp := func() {
+		base := "http://localhost:8080/api/v1/query"
+		params := url.Values{}
+		params.Set("expression", "service=ap-south1")
+		params.Set("start", "0")
+		params.Set("end", "0")
+		params.Set("resolution", "0s")
+		fullURL := base + "?" + params.Encode()
+
+		resp, err := http.Get(fullURL)
+		testutil.Ok(t, err, "Failed to get query output from REST API after flushing")
+		defer resp.Body.Close()
+		testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
+		var queryOutputAfterFlush []store.QueryResponse
+		decoder := json.NewDecoder(resp.Body)
+		err = decoder.Decode(&queryOutputAfterFlush)
+		testutil.Ok(t, err, "Failed to decode query output from response after flushing")
+		testutil.Assert(t, len(queryOutputAfterFlush) == 2, "Expected 2 log entry in query output after flushing, got %d", len(queryOutputAfterFlush))
+	}
+
+	queryEp()
+
+	// wait for compaction to kick in after 5s
+	time.Sleep(16 * time.Second)
+	queryEp()
 }

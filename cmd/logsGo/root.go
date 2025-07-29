@@ -26,7 +26,7 @@ var rootCmd = &cobra.Command{
 	Use:   "logsgo",
 	Short: "Start the standalone LogsGo ingestion service",
 	Run: func(cmd *cobra.Command, args []string) {
-		if !validateTimeDurations(cfg.MaxRetentionTime) || !validateTimeDurations(cfg.MaxTimeInMem) {
+		if !validateTimeDurations(cfg.MaxRetentionTime) || !validateTimeDurations(cfg.MaxTimeInMem) || !validateTimeDurations(cfg.CompactDuration) {
 			log.Fatal("Invalid time duration set")
 		}
 
@@ -121,6 +121,11 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.TLSConfigPath, "tls-config-path", "", "Path to TLS configuration file containing cert and key for gRPC and HTTP servers, if set will enable TLS encryption")
 	rootCmd.Flags().StringVar(&cfg.QueueConfigPath, "queue-config-path", "", "Path to your message queue configuration file, if used. Should contain: name*, url* and numWorkers to distribute tasks (optional, default:1)")
 	rootCmd.Flags().SortFlags = true
+
+	// Compaction
+	rootCmd.Flags().StringVar(&cfg.CompactDuration, "compact-duration", "12h", "Durations after which compaction cycle runs")
+	rootCmd.Flags().StringVar(&cfg.CompactConfig, "compact-config", "", "Config for compaction and downsampling")
+	_ = rootCmd.Flags().MarkHidden("compact-config")
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)
