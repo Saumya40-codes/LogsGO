@@ -54,6 +54,8 @@
   Here is how an ideal flow *can* look:
   ![Queueing Model](docs/logs-queueing.png)
 
+- **Compaction support**: The blocks in s3 (if used) can be compacted to smaller blocks for better performance (for e.g. 6, 2hour blocks can compacted to one 12 hour block), checkout [config](https://github.com/Saumya40-codes/LogsGO/blob/0a1ae7755504a966fd039bd78e024ea1d112b1c8/pkg/store/compact.go#L16C1-L30C2) for more info 
+
 ---
 
 ## Architecture Overview
