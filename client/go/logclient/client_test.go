@@ -503,11 +503,14 @@ func TestCompaction(t *testing.T) {
 	testutil.Ok(t, err)
 
 	cfg, err := yaml.Marshal(store.CompactConfig{
-		Level0Retention: 2 * time.Second, // keep L0 in the same state for gigantic 2s
-		Level1Retention: time.Hour,
-		Level2Retention: time.Hour,
-		Level1BatchSize: 2, // just 2 block required to trigger, just to test :)
-		Level2BatchSize: 1,
+		Level0Retention:        2 * time.Second, // keep L0 in the same state for gigantic 2s
+		Level1Retention:        time.Hour,
+		Level2Retention:        time.Hour,
+		Level1BatchSize:        2, // just 2 block required to trigger, just to test :)
+		Level2BatchSize:        1,
+		AllowIncompleteBatches: true, // to allow compaction to kick in even if we don't have enough blocks
+		MaxBlockLifetime:       time.Hour,
+		CompactionGracePeriod:  1 * time.Hour, // lets not delete compacted blocks for 1 hour + retention time
 	})
 	testutil.Ok(t, err)
 
@@ -515,7 +518,7 @@ func TestCompaction(t *testing.T) {
 
 	factory.DataDir = t.TempDir()
 	factory.MaxTimeInMem = "1s"
-	factory.MaxRetentionTime = "5s"
+	factory.MaxRetentionTime = "3s"
 	factory.CompactDuration = "20s"
 	factory.StoreConfig = string(bktConfig)
 
@@ -539,18 +542,7 @@ func TestCompaction(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
-	testutil.Ok(t, err)
-
-	err = lc.UploadLog(ctx, opts)
-	testutil.Ok(t, err, "logs can't be uploaded")
-
-	testutil.Ok(t, lc.UploadLog(ctx, opts), "logs can't be uploaded")
-	time.Sleep(5 * time.Second)
-
-	testutil.Ok(t, lc.UploadLog(ctx, newOpt), "logs can't be uploaded")
-
-	queryEp := func() {
+	queryEp := func(expectedCount int) {
 		base := "http://localhost:8080/api/v1/query"
 		params := url.Values{}
 		params.Set("expression", "service=ap-south1")
@@ -567,12 +559,23 @@ func TestCompaction(t *testing.T) {
 		decoder := json.NewDecoder(resp.Body)
 		err = decoder.Decode(&queryOutputAfterFlush)
 		testutil.Ok(t, err, "Failed to decode query output from response after flushing")
-		testutil.Assert(t, len(queryOutputAfterFlush) == 2, "Expected 2 log entry in query output after flushing, got %d", len(queryOutputAfterFlush))
+		testutil.Assert(t, len(queryOutputAfterFlush) == expectedCount, "Expected %d log entry in query output after flushing, got %d", expectedCount, len(queryOutputAfterFlush))
 	}
 
-	queryEp()
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	testutil.Ok(t, err)
+
+	testutil.Ok(t, lc.UploadLog(ctx, opts), "logs can't be uploaded")
+
+	queryEp(1)
+
+	time.Sleep(5 * time.Second)
+
+	testutil.Ok(t, lc.UploadLog(ctx, newOpt), "logs can't be uploaded")
+
+	queryEp(2)
 
 	// wait for compaction to kick in after 5s
 	time.Sleep(16 * time.Second)
-	queryEp()
+	queryEp(2)
 }
