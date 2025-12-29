@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/dgraph-io/badger/v4 v4.8.0
+	github.com/dgraph-io/badger/v4 v4.9.0
 	github.com/efficientgo/core v1.0.0-rc.3
 	github.com/efficientgo/e2e v0.14.0
 	github.com/gin-contrib/cors v1.7.5
