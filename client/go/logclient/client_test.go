@@ -2,6 +2,7 @@ package logclient
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +19,8 @@ import (
 	"github.com/efficientgo/core/testutil"
 	"github.com/efficientgo/e2e"
 	e2edb "github.com/efficientgo/e2e/db"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/yaml.v3"
 )
@@ -578,4 +581,89 @@ func TestCompaction(t *testing.T) {
 	// wait for compaction to kick in after 5s
 	time.Sleep(16 * time.Second)
 	queryEp(2)
+}
+
+// TestCompactionIndex verifies that after compaction runs the per-service index file
+// (index/<service>.json) is created in the bucket and contains at least one entry.
+func TestCompactionIndex(t *testing.T) {
+	// start minio server and docker env
+	e, err := e2e.NewDockerEnvironment("compactionIndex")
+	testutil.Ok(t, err)
+	t.Cleanup(func() {
+		cleanupFactory()
+		e.Close()
+	})
+
+	m1 := e2edb.NewMinio(e, "minio-idx", "default")
+	testutil.Ok(t, e2e.StartAndWaitReady(m1))
+
+	bktConfig, err := yaml.Marshal(store.Config{
+		RemoteStore: store.BucketStoreConfig{
+			Provider:            "minio",
+			Bucket:              "bkt1",
+			CreateBucketOnEmpty: true,
+			Endpoint:            m1.Endpoint("http"),
+			SecretKey:           e2edb.MinioSecretKey,
+			AccessKey:           e2edb.MinioAccessKey,
+		},
+	})
+	testutil.Ok(t, err)
+
+	// fast compaction settings
+	cfg, err := yaml.Marshal(store.CompactConfig{
+		Level0Retention:        2 * time.Second,
+		Level1Retention:        time.Hour,
+		Level2Retention:        time.Hour,
+		Level1BatchSize:        1,
+		Level2BatchSize:        1,
+		AllowIncompleteBatches: true,
+		MaxBlockLifetime:       time.Hour,
+		CompactionGracePeriod:  1 * time.Hour,
+	})
+	testutil.Ok(t, err)
+
+	factory.CompactConfig = string(cfg)
+	factory.DataDir = t.TempDir()
+	factory.MaxTimeInMem = "1s"
+	factory.MaxRetentionTime = "10s"
+	factory.CompactDuration = "10s"
+	factory.StoreConfig = string(bktConfig)
+
+	ctx := t.Context()
+	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+
+	// wait for servers
+	time.Sleep(2 * time.Second)
+
+	opts := &LogOpts{Message: "compaction index test", Level: "info", Service: "ap-south1"}
+	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	testutil.Ok(t, err)
+
+	testutil.Ok(t, lc.UploadLog(ctx, opts))
+
+	// give time for flush + compaction to run
+	time.Sleep(25 * time.Second)
+
+	// create a minio client to fetch the index file directly
+	mc, err := minio.New(m1.Endpoint("http"), &minio.Options{
+		Creds:  credentials.NewStaticV4(e2edb.MinioAccessKey, e2edb.MinioSecretKey, ""),
+		Secure: false,
+	})
+	testutil.Ok(t, err)
+
+	// try to fetch the index file for service
+	obj, err := mc.GetObject(ctx, "bkt1", "index/ap-south1.json", minio.GetObjectOptions{})
+	testutil.Ok(t, err)
+	defer obj.Close()
+
+	data, err := io.ReadAll(obj)
+	testutil.Ok(t, err)
+
+	var idx store.ServiceIndex
+	err = json.Unmarshal(data, &idx)
+	testutil.Ok(t, err)
+
+	testutil.Assert(t, len(idx.Entries) > 0, "Expected at least one index entry, got 0")
 }

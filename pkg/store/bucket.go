@@ -299,6 +299,39 @@ func (b *BucketStore) LabelValues(labels *Labels) error {
 
 func (b *BucketStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
 	cfg.Cache.BucketOnce.Do(func() {
+		// Fast-path: if query is service-scoped, try index to find compacted blocks covering the range
+		if cfg.Filter.Service != "" {
+			minT := cfg.Ts - cfg.Lookback
+			maxT := cfg.Ts
+			if entries, err := b.findBestCompactedBlocks(cfg.Filter.Service, minT, maxT); err == nil && entries != nil {
+				var all []*logapi.Series
+				ok := true
+				for _, e := range entries {
+					s, err := b.loadSeriesFromBlock(e.Key)
+					if err != nil {
+						ok = false
+						break
+					}
+					all = append(all, s...)
+				}
+				if ok {
+					cfg.Cache.BucketData = all
+					slices.SortFunc(cfg.Cache.BucketData, func(a, b *logapi.Series) int {
+						if a.Entry.Timestamp < b.Entry.Timestamp {
+							return 1
+						}
+						if a.Entry.Timestamp > b.Entry.Timestamp {
+							return -1
+						}
+						return 0
+					})
+					// fast-path succeeded
+					return
+				}
+			}
+			// fallthrough to full fetch on error or no entries
+		}
+
 		b.fetchLogs(&cfg.Cache.BucketData)
 		slices.SortFunc(cfg.Cache.BucketData, func(a, b *logapi.Series) int {
 			if a.Entry.Timestamp < b.Entry.Timestamp {
@@ -413,6 +446,7 @@ func (b *BucketStore) fetchLogs(logs *[]*logapi.Series) error {
 }
 
 func (b *BucketStore) loadSeriesFromBlock(objectKey string) ([]*logapi.Series, error) {
+	b.metrics.BucketCalls.Inc()
 	ctx := b.ctx
 
 	obj, err := b.client.GetObject(ctx, b.config.Bucket, objectKey, minio.GetObjectOptions{})
@@ -513,4 +547,60 @@ func (b *BucketStore) runCompactWithConfig(duration time.Duration, config Compac
 			return
 		}
 	}
+}
+
+func (b *BucketStore) getServiceIndex(service string) (*ServiceIndex, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.metrics.BucketCalls.Inc()
+	objectName := fmt.Sprintf("index/%s.json", service)
+
+	if _, err := b.client.StatObject(b.ctx, b.config.Bucket, objectName, minio.StatObjectOptions{}); err != nil {
+		return &ServiceIndex{Entries: []IndexEntry{}}, nil
+	}
+
+	obj, err := b.client.GetObject(b.ctx, b.config.Bucket, objectName, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer obj.Close()
+
+	data, err := io.ReadAll(obj)
+	if err != nil {
+		return nil, err
+	}
+
+	idx := &ServiceIndex{}
+	if len(data) == 0 {
+		return idx, nil
+	}
+
+	if err := json.Unmarshal(data, idx); err != nil {
+		return nil, err
+	}
+	return idx, nil
+}
+
+func (b *BucketStore) putServiceIndex(service string, idx *ServiceIndex) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.metrics.BucketCalls.Inc()
+	objectName := fmt.Sprintf("index/%s.json", service)
+
+	data, err := json.Marshal(idx)
+	if err != nil {
+		return err
+	}
+
+	reader := bytes.NewReader(data)
+	_, err = b.client.PutObject(b.ctx, b.config.Bucket, objectName, reader, int64(len(data)),
+		minio.PutObjectOptions{ContentType: "application/json"})
+
+	if err != nil {
+		fmt.Printf("Failed to put service index for %s: %v\n", service, err)
+	}
+
+	return err
 }
