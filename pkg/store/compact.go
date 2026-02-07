@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -413,6 +414,17 @@ func (b *BucketStore) compactBlocks(blocks []BlockInfo, targetLevel int, config 
 		return fmt.Errorf("failed to write compacted block %s: %w", newBlockKey, err)
 	}
 
+	// add block index
+	if err := b.addCompactedBlockIndex(blocks[0].Service, IndexEntry{
+		MinTS:     minT,
+		MaxTS:     maxT,
+		Level:     targetLevel,
+		Key:       newBlockKey,
+		CreatedAt: time.Now(),
+	}); err != nil {
+		return fmt.Errorf("failed to add compacted block index for %s: %w", newBlockKey, err)
+	}
+
 	log.Printf("Successfully created compacted block %s from %d source blocks", newBlockKey, len(blocks))
 
 	// !!! We don't delete the source blocks here anymore.
@@ -480,4 +492,81 @@ func (b *BucketStore) writeCompactedBlock(key string, series []*logapi.Series) e
 	}
 
 	return b.uploadLogsToStorage(batch, key)
+}
+
+func (b *BucketStore) addCompactedBlockIndex(service string, e IndexEntry) error {
+	idx, err := b.getServiceIndex(service)
+	if err != nil {
+		fmt.Printf("Failed to get service index for %s: %v\n", service, err)
+		return err
+	}
+	idx.Entries = append(idx.Entries, e)
+	slices.SortFunc(idx.Entries, func(a, b IndexEntry) int {
+		return int(a.MinTS) - int(b.MinTS)
+	})
+
+	if err := b.putServiceIndex(service, idx); err != nil {
+		return fmt.Errorf("failed to update service index for %s: %w", service, err)
+	}
+	return nil
+}
+
+// findBestCompactedBlocks finds compacted index entries that best cover [minT,maxT].
+// Strategy: prefer a single entry at the highest level that fully covers the range.
+// If none, try to find contiguous entries at the same level that together cover the range.
+// Returns nil,nil when no compacted coverage found.
+func (b *BucketStore) findBestCompactedBlocks(service string, minT, maxT int64) ([]IndexEntry, error) {
+	idx, err := b.getServiceIndex(service)
+	if err != nil {
+		return nil, err
+	}
+	if len(idx.Entries) == 0 {
+		return nil, nil
+	}
+
+	// bucket by level
+	levels := make(map[int][]IndexEntry)
+	for _, e := range idx.Entries {
+		levels[e.Level] = append(levels[e.Level], e)
+	}
+
+	// try higher levels first (coarser)
+	for level := 2; level >= 0; level-- {
+		ents, ok := levels[level]
+		if !ok || len(ents) == 0 {
+			continue
+		}
+		sort.Slice(ents, func(i, j int) bool { return ents[i].MinTS < ents[j].MinTS })
+
+		// single entry cover
+		for _, e := range ents {
+			// e.MinTS >= minT, as we use lookback thus ideally minT should be outer zone
+			if e.MinTS >= minT && e.MaxTS >= maxT {
+				return []IndexEntry{e}, nil
+			}
+		}
+
+		// try contiguous coverage at this level (greedy)
+		var collected []IndexEntry
+		cur := minT
+		for _, e := range ents {
+			if e.MaxTS < cur {
+				continue
+			}
+			// if there's a gap before this entry and we haven't started collecting, fail for this level
+			if e.MinTS > cur && len(collected) == 0 {
+				break
+			}
+			if e.MinTS <= cur {
+				collected = append(collected, e)
+				if e.MaxTS >= maxT {
+					return collected, nil
+				}
+				cur = e.MaxTS + 1
+			}
+		}
+		// this level couldn't fully cover the range; try next (finer) level
+	}
+
+	return nil, nil
 }
