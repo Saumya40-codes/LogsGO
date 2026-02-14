@@ -11,6 +11,7 @@ import (
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/internal"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
@@ -18,7 +19,6 @@ import (
 
 // MemoryStore implements the Store interface using an in-memory map.
 type MemoryStore struct {
-	logs            []*logapi.LogEntry
 	mu              sync.Mutex
 	next            *Store        // Next store in the chain, if any
 	maxTimeInMemory time.Duration // Maximum time in memory, after which logs are flushed to the next store
@@ -29,11 +29,11 @@ type MemoryStore struct {
 	index           *ShardedLogIndex // shared log index
 	meta            Labels           // contains all unique labels for this store, this is used to get unique label values
 	metrics         *metrics.Metrics
+	skipList        *internal.SkipList
 }
 
 func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) *MemoryStore {
 	mstore := &MemoryStore{
-		logs:            make([]*logapi.LogEntry, 0),
 		mu:              sync.Mutex{},
 		next:            next,
 		maxTimeInMemory: pkg.GetTimeDuration(maxTimeInMemory),
@@ -49,6 +49,8 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index
 		metrics: metrics,
 	}
 
+	mstore.skipList = internal.NewSkipList()
+
 	go mstore.startFlushTimer()
 	return mstore
 }
@@ -60,8 +62,6 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 	timer := prometheus.NewTimer(m.metrics.IngestionDuration.WithLabelValues("memory"))
 	defer timer.ObserveDuration()
 
-	m.logs = append(m.logs, logs...)
-
 	for _, log := range logs {
 		key := LogKey{log.Service, log.Message, log.Level}
 		ts := log.Timestamp
@@ -72,16 +72,15 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 		}
 		newCounterVal := shardedSeries.data[key]
 		m.series[key][ts] = *newCounterVal
+
+		m.skipList.Insert(ts, internal.Value{Service: log.Service, Level: log.Level, Message: log.Message})
+
 		m.meta.Services[log.Service]++
 		m.meta.Levels[log.Level]++
 	}
 
-	sort.Slice(m.logs, func(i, j int) bool {
-		return m.logs[j].Timestamp < m.logs[i].Timestamp
-	})
-
 	m.metrics.LogsIngested.WithLabelValues("memory").Add(float64(len(logs)))
-	m.metrics.CurrentLogsIngested.WithLabelValues("memory").Set(float64(len(m.logs)))
+	m.metrics.CurrentLogsIngested.WithLabelValues("memory").Set(float64(len(m.series)))
 	return nil
 }
 
@@ -89,47 +88,60 @@ func (m *MemoryStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQ
 	var allResults []InstantQueryResponse
 
 	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
-		startIdx := getStartingTimeIndex(m.logs, cfg.Ts)
+		it := m.skipList.Seek(internal.IteratorSearchOpts{
+			Start: cfg.Ts - cfg.Lookback,
+			End:   cfg.Ts,
+		})
 
-		for idx := startIdx; idx < len(m.logs); idx++ {
-			logs := m.logs[idx]
-			if cfg.Ts-cfg.Lookback > logs.Timestamp {
+		for {
+			node, ok := it.Next()
+			if !ok {
 				break
 			}
-			if logs.Timestamp > cfg.Ts { // this won't be needed as we only consider logs with Ts <= cfg.Ts, but lets keep it for sanity
-				continue
-			}
-			if cfg.Filter.Service != "" && logs.Service != cfg.Filter.Service {
-				continue
-			}
-			if cfg.Filter.Level != "" && logs.Level != cfg.Filter.Level {
-				continue
-			}
 
-			logKey := LogKey{Service: logs.Service, Level: logs.Level, Message: logs.Message}
-			logSeries, ok := m.series[logKey]
-			if !ok {
-				return nil, fmt.Errorf("logKey %v not found in series", logKey)
-			}
-			entry, ok := logSeries[logs.Timestamp]
-			if !ok {
-				return nil, fmt.Errorf("timestamp %v not found in logKey series", logs.Timestamp)
-			}
+			ts := node.GetKey()
+			logs := node.GetValues()
 
-			allResults = append(allResults, InstantQueryResponse{
-				TimeStamp: logs.Timestamp,
-				Service:   logs.Service,
-				Level:     logs.Level,
-				Message:   logs.Message,
-				Count:     uint64(entry.value),
-			})
+			for _, log := range logs {
+				if cfg.Filter.Service != "" && log.Service != cfg.Filter.Service {
+					continue
+				}
+				if cfg.Filter.Level != "" && log.Level != cfg.Filter.Level {
+					continue
+				}
+
+				logKey := LogKey{
+					Service: log.Service,
+					Level:   log.Level,
+					Message: log.Message,
+				}
+				logSeries, ok := m.series[logKey]
+				if !ok {
+					return nil, fmt.Errorf("logKey %v not found in series", logKey)
+				}
+				entry, ok := logSeries[ts]
+				if !ok {
+					return nil, fmt.Errorf("timestamp %v not found in logKey series", ts)
+				}
+
+				allResults = append(allResults, InstantQueryResponse{
+					TimeStamp: ts,
+					Service:   log.Service,
+					Level:     log.Level,
+					Message:   log.Message,
+					Count:     uint64(entry.value),
+				})
+
+				// as we got latest data point, we can stop searching
+				break
+			}
 		}
 	} else {
 		lhsResults := make([]InstantQueryResponse, 0)
 		var err error
 		if cfg.Filter.LHS != nil {
 			lhsCfg := *cfg
-			lhsCfg.Filter = *cfg.Filter.LHS
+			lhsCfg.Filter = *cfg.Filter.LHS.Clone()
 			lhsResults, err = m.QueryInstant(&lhsCfg)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query LHS: %w", err)
@@ -139,7 +151,7 @@ func (m *MemoryStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQ
 		rhsResults := make([]InstantQueryResponse, 0)
 		if cfg.Filter.RHS != nil {
 			rhsCfg := *cfg
-			rhsCfg.Filter = *cfg.Filter.RHS
+			rhsCfg.Filter = *cfg.Filter.RHS.Clone()
 			rhsResults, err = m.QueryInstant(&rhsCfg)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query RHS: %w", err)
@@ -345,7 +357,7 @@ func deduplicateInstantResponses(responses []InstantQueryResponse) []InstantQuer
 
 	for _, r := range responses {
 		key := r.Service + "|" + r.Level + "|" + r.Message
-		if _, exists := deduped[key]; !exists {
+		if _, exists := deduped[key]; !exists || r.TimeStamp > deduped[key].TimeStamp {
 			deduped[key] = r
 		}
 	}
