@@ -8,12 +8,13 @@
 ---
 
 > Checkout [/docs](https://github.com/Saumya40-codes/LogsGO/tree/main/docs) to see the arch design, auth flows and several other brainstorming made for this project :)
+> Checkout [/bench](https://github.com/Saumya40-codes/LogsGO/tree/main/bench) to see benchmarks of ingesting 1M logs and LogsGo performance with both manual log ingestion and via async message queue
 
 ## Features
 
 -  **Push-based log ingestion** using a lightweight gRPC client.
 -  **Multi-tiered store architecture**:
-    - **In-memory store** → for fast ingestion and short-term access.
+    - **In-memory store** → for fast ingestion and short-term access, uses Skiplist as a underneath store for fast (O(logn)) based insertion and faster querying (O(logn))
     - **Local store** → persistent storage by [BadgerDB](https://github.com/dgraph-io/badger).
     - **Cloud store** → support for S3-compatible services like AWS S3 or MinIO.
 -  **Chained store design**: Each store passes query and flush operations to its `.next` store for transparent fallbacks and deep queries.
