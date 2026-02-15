@@ -19,13 +19,6 @@ benchtest_logsgo  | ━━━━━━━━━━━━━━━━━━━━
 benchtest_logsgo  | ✅ SUCCESS: All logs processed successfully!
 ```
 
-As you can see max batch latency is bit high, this is due to the default configuration involving locks, flushing, etc. which no doubt can be improved. Not to mention, the flush interval from memory store -> local store was kept very low in this case (i.e. 4m ) and it was flushed in two turns
-
-```
-logsgo         | 2025/07/14 05:25:07 Flushed 999447 logs to disk.
-logsgo         | 2025/07/14 05:29:09 Flushed 553 logs to disk.
-```
-
 If ~15s for 1M log ingestion is still costly, the opt-in support for message queue can be used, which does it in blink of the eye. Of course now all load will be on logsGo server ingestion workers to do the job, but the main part is decoupling here. The result of the same: 
 
 ```
