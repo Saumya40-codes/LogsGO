@@ -33,13 +33,14 @@ type Iterator struct {
 }
 
 func NewSkipList() *SkipList {
+	maxLevel := 8
 	return &SkipList{
 		level: 0,
 		head: &Node{ // sentinel
 			key:     -1,
-			forward: make([]*Node, 16),
+			forward: make([]*Node, maxLevel),
 		},
-		maxLevel: 16, // shouhld it be configurable?
+		maxLevel: maxLevel, // shouhld it be configurable?
 	}
 }
 
@@ -89,7 +90,31 @@ func (s *SkipList) Insert(key int64, value Value) {
 }
 
 func (s *SkipList) Delete(key int64) {
+	curr := s.head
+	update := make([]*Node, s.maxLevel)
 
+	for level := s.level; level >= 0; level-- {
+		for curr.forward[level] != nil && curr.forward[level].key < key {
+			curr = curr.forward[level]
+		}
+		update[level] = curr
+	}
+
+	target := curr.forward[0]
+	if target == nil || target.key != key {
+		return
+	}
+
+	for level := 0; level <= s.level; level++ {
+		if update[level].forward[level] != target {
+			break // target not found at this level so it won't have been promoted to subsequent levels
+		}
+		update[level].forward[level] = target.forward[level]
+	}
+
+	for s.level > 0 && s.head.forward[s.level] == nil {
+		s.level--
+	}
 }
 
 func shouldPromoteToNextLevel() bool {
@@ -97,7 +122,7 @@ func shouldPromoteToNextLevel() bool {
 }
 
 // Floor returns max key which is smaller than or equal to the given key
-func (s *SkipList) Floor(key int64) ([]Value, bool) {
+func (s *SkipList) Floor(key int64) (*Node, bool) {
 	curr := s.head
 	for level := s.level; level >= 0; level-- {
 		for curr.forward[level] != nil && curr.forward[level].key <= key {
@@ -106,7 +131,7 @@ func (s *SkipList) Floor(key int64) ([]Value, bool) {
 	}
 
 	if curr != s.head {
-		return curr.values, true
+		return curr, true
 	}
 
 	return nil, false

@@ -79,13 +79,3 @@ func NewInstantQueryConfig(ts, Lookback int64, filter LogFilter) *InstantQueryCo
 		Cache:    cache,
 	}
 }
-
-func (f *LogFilter) Clone() *LogFilter {
-	return &LogFilter{
-		Level:   f.Level,
-		Service: f.Service,
-		Or:      f.Or,
-		RHS:     f.RHS.Clone(),
-		LHS:     f.LHS.Clone(),
-	}
-}
