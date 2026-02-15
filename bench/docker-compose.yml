@@ -3,6 +3,21 @@ networks:
     name: logsgo
 
 services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    networks:
+      - logsgo
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
   logsGo:
     image: saumyashah40/logsgo:dev
     container_name: logsgo
@@ -23,16 +38,8 @@ services:
       - --max-time-in-mem=4m
       - --max-retention-time=10m
     depends_on:
-      - rabbitmq
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    networks:
-      - logsgo
-    container_name: rabbitmq
+      rabbitmq:
+        condition: service_healthy
 
   bench_logsgo:
     image: saumyashah40/benchtest_logsgo
@@ -40,8 +47,9 @@ services:
     networks:
       - logsgo
     depends_on:
-      - logsGo
-      - rabbitmq
+      logsGo:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
     command:
       - --enable-queue
-

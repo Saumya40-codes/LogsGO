@@ -229,8 +229,6 @@ func TestQueryOutput(t *testing.T) {
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
 	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
 
-	time.Sleep(2 * time.Second) // wait for servers
-
 	opts := &LogOpts{
 		Message: "Time duration execeeded",
 		Level:   "warn",

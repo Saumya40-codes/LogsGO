@@ -11,6 +11,7 @@ import (
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/internal"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
@@ -18,13 +19,13 @@ import (
 
 // MemoryStore implements the Store interface using an in-memory map.
 type MemoryStore struct {
-	logs            []*logapi.LogEntry
 	mu              sync.Mutex
 	next            *Store        // Next store in the chain, if any
 	maxTimeInMemory time.Duration // Maximum time in memory, after which logs are flushed to the next store
 	lastFlushTime   int64         // Timestamp of the last flush operation
 	shutdown        chan struct{} // Channel to signal shutdown of the store
 	flushOnExit     bool
+	skipList        *internal.SkipList
 	series          map[LogKey]map[int64]CounterValue
 	index           *ShardedLogIndex // shared log index
 	meta            Labels           // contains all unique labels for this store, this is used to get unique label values
@@ -33,7 +34,6 @@ type MemoryStore struct {
 
 func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) *MemoryStore {
 	mstore := &MemoryStore{
-		logs:            make([]*logapi.LogEntry, 0),
 		mu:              sync.Mutex{},
 		next:            next,
 		maxTimeInMemory: pkg.GetTimeDuration(maxTimeInMemory),
@@ -49,6 +49,8 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index
 		metrics: metrics,
 	}
 
+	mstore.skipList = internal.NewSkipList()
+
 	go mstore.startFlushTimer()
 	return mstore
 }
@@ -60,11 +62,9 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 	timer := prometheus.NewTimer(m.metrics.IngestionDuration.WithLabelValues("memory"))
 	defer timer.ObserveDuration()
 
-	m.logs = append(m.logs, logs...)
-
-	for _, log := range logs {
-		key := LogKey{log.Service, log.Message, log.Level}
-		ts := log.Timestamp
+	for _, lg := range logs {
+		key := LogKey{lg.Service, lg.Message, lg.Level}
+		ts := lg.Timestamp
 		m.index.Inc(key)
 		shardedSeries := m.index.getShard(key)
 		if m.series[key] == nil {
@@ -72,110 +72,45 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 		}
 		newCounterVal := shardedSeries.data[key]
 		m.series[key][ts] = *newCounterVal
-		m.meta.Services[log.Service]++
-		m.meta.Levels[log.Level]++
+
+		m.skipList.Insert(ts, internal.Value{Service: lg.Service, Level: lg.Level, Message: lg.Message})
+
+		m.meta.Services[lg.Service]++
+		m.meta.Levels[lg.Level]++
 	}
 
-	sort.Slice(m.logs, func(i, j int) bool {
-		return m.logs[j].Timestamp < m.logs[i].Timestamp
-	})
-
 	m.metrics.LogsIngested.WithLabelValues("memory").Add(float64(len(logs)))
-	m.metrics.CurrentLogsIngested.WithLabelValues("memory").Set(float64(len(m.logs)))
 	return nil
 }
 
 func (m *MemoryStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
-	var allResults []InstantQueryResponse
+	var wg sync.WaitGroup
 
-	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
-		startIdx := getStartingTimeIndex(m.logs, cfg.Ts)
-
-		for idx := startIdx; idx < len(m.logs); idx++ {
-			logs := m.logs[idx]
-			if cfg.Ts-cfg.Lookback > logs.Timestamp {
-				break
-			}
-			if logs.Timestamp > cfg.Ts { // this won't be needed as we only consider logs with Ts <= cfg.Ts, but lets keep it for sanity
-				continue
-			}
-			if cfg.Filter.Service != "" && logs.Service != cfg.Filter.Service {
-				continue
-			}
-			if cfg.Filter.Level != "" && logs.Level != cfg.Filter.Level {
-				continue
-			}
-
-			logKey := LogKey{Service: logs.Service, Level: logs.Level, Message: logs.Message}
-			logSeries, ok := m.series[logKey]
-			if !ok {
-				return nil, fmt.Errorf("logKey %v not found in series", logKey)
-			}
-			entry, ok := logSeries[logs.Timestamp]
-			if !ok {
-				return nil, fmt.Errorf("timestamp %v not found in logKey series", logs.Timestamp)
-			}
-
-			allResults = append(allResults, InstantQueryResponse{
-				TimeStamp: logs.Timestamp,
-				Service:   logs.Service,
-				Level:     logs.Level,
-				Message:   logs.Message,
-				Count:     uint64(entry.value),
-			})
-		}
-	} else {
-		lhsResults := make([]InstantQueryResponse, 0)
-		var err error
-		if cfg.Filter.LHS != nil {
-			lhsCfg := *cfg
-			lhsCfg.Filter = *cfg.Filter.LHS
-			lhsResults, err = m.QueryInstant(&lhsCfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query LHS: %w", err)
-			}
-		}
-
-		rhsResults := make([]InstantQueryResponse, 0)
-		if cfg.Filter.RHS != nil {
-			rhsCfg := *cfg
-			rhsCfg.Filter = *cfg.Filter.RHS
-			rhsResults, err = m.QueryInstant(&rhsCfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query RHS: %w", err)
-			}
-		}
-
-		if cfg.Filter.Or {
-			allResults = append(allResults, lhsResults...)
-			allResults = append(allResults, rhsResults...)
-		} else {
-			rhsMap := make(map[string]struct{})
-			for _, r := range rhsResults {
-				key := r.Service + "|" + r.Level + "|" + r.Message
-				rhsMap[key] = struct{}{}
-			}
-			for _, r := range lhsResults {
-				key := r.Service + "|" + r.Level + "|" + r.Message
-				if _, ok := rhsMap[key]; ok {
-					allResults = append(allResults, r)
-				}
-			}
-		}
-	}
-
-	// Merge results from the next store
+	// start querying next store concurrently if exists
+	var nextRes []InstantQueryResponse
+	var nextErr error
 	if m.next != nil {
 		if localStore, ok := (*m.next).(*LocalStore); ok {
-			nextResults, err := localStore.QueryInstant(cfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query next store: %w", err)
-			}
-			allResults = append(allResults, nextResults...)
-		} else {
-			return nil, fmt.Errorf("next store is not a LocalStore, cannot query")
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				nextRes, nextErr = localStore.QueryInstant(cfg)
+			}()
 		}
 	}
+
+	m.mu.Lock()
+	memResult, err := m.getInstantQueryResponse(cfg)
+	m.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get instant query response: %w", err)
+	}
+
+	wg.Wait()
+	if nextErr != nil {
+		return nil, fmt.Errorf("failed to query next store: %w", nextErr)
+	}
+	allResults := append(memResult, nextRes...)
 
 	return deduplicateInstantResponses(allResults), nil
 }
@@ -217,7 +152,6 @@ func (m *MemoryStore) Flush() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var logsToBeFlushed []*logapi.LogEntry
-	var logsToKeep []*logapi.LogEntry
 	currT := time.Now().Unix()
 	maxThreshold := currT - int64(m.maxTimeInMemory.Seconds())
 
@@ -228,28 +162,39 @@ func (m *MemoryStore) Flush() error {
 		return errors.New("invalid maxTimeInMemory parameter set")
 	}
 
-	thresholdIdx := getStartingTimeIndex(m.logs, maxThreshold)
-	logsToBeFlushed = m.logs[thresholdIdx:]
-	logsToKeep = m.logs[:thresholdIdx]
-
-	if len(logsToBeFlushed) == 0 {
-		return nil // No logs to flush
-	}
+	iter := m.skipList.Seek(internal.IteratorSearchOpts{
+		Start: m.lastFlushTime + 1,
+		End:   maxThreshold,
+	})
 
 	if m.next != nil {
 		if localStore, ok := (*m.next).(*LocalStore); ok {
+			for {
+				node, ok := iter.Next()
+				if !ok {
+					break
+				}
+				ts := node.GetKey()
+				logs := node.GetValues()
+
+				for _, log := range logs {
+					logsToBeFlushed = append(logsToBeFlushed, &logapi.LogEntry{
+						Service:   log.Service,
+						Level:     log.Level,
+						Message:   log.Message,
+						Timestamp: ts,
+					})
+				}
+				m.skipList.Delete(ts)
+			}
 			if err := localStore.Insert(logsToBeFlushed, m.series); err != nil {
 				return fmt.Errorf("failed to insert logs into next store: %w", err)
 			}
-			log.Printf("Flushed %d logs to disk.\n", len(logsToBeFlushed))
-			m.metrics.LogsFlushed.WithLabelValues("memory", "local").Add(float64(len(logsToBeFlushed)))
 		} else {
-			return fmt.Errorf("next store is not a LocalStore, cannot insert logs")
+			log.Println("next store is not a LocalStore, cannot insert logs")
+			return nil
 		}
 	}
-
-	m.logs = logsToKeep
-	m.metrics.CurrentLogsIngested.WithLabelValues("memory").Set(float64(len(logsToKeep)))
 
 	for _, log := range logsToBeFlushed {
 		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
@@ -279,6 +224,7 @@ func (m *MemoryStore) Flush() error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -286,7 +232,12 @@ func (m *MemoryStore) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.logs = m.logs[:0]
+	m.series = make(map[LogKey]map[int64]CounterValue)
+	m.skipList = internal.NewSkipList()
+	m.meta = Labels{
+		Services: make(map[string]int),
+		Levels:   make(map[string]int),
+	}
 
 	// Close the next store if it exists
 	if m.next != nil {
@@ -310,6 +261,7 @@ func (m *MemoryStore) startFlushTimer() {
 			// Start Flushing, what to flush should be decided by another function
 			m.Flush()
 			m.lastFlushTime = time.Now().Unix()
+
 		case <-m.shutdown:
 			if m.flushOnExit {
 				m.Flush()
@@ -345,7 +297,7 @@ func deduplicateInstantResponses(responses []InstantQueryResponse) []InstantQuer
 
 	for _, r := range responses {
 		key := r.Service + "|" + r.Level + "|" + r.Message
-		if _, exists := deduped[key]; !exists {
+		if _, exists := deduped[key]; !exists || r.TimeStamp > deduped[key].TimeStamp {
 			deduped[key] = r
 		}
 	}
@@ -360,4 +312,94 @@ func deduplicateInstantResponses(responses []InstantQueryResponse) []InstantQuer
 	})
 
 	return final
+}
+
+func (m *MemoryStore) getInstantQueryResponse(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
+	var allResults []InstantQueryResponse
+	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
+		it := m.skipList.Seek(internal.IteratorSearchOpts{
+			Start: cfg.Ts - cfg.Lookback,
+			End:   cfg.Ts,
+		})
+
+		for {
+			node, ok := it.Next()
+			if !ok {
+				break
+			}
+
+			ts := node.GetKey()
+			logs := node.GetValues()
+
+			for _, log := range logs {
+				if cfg.Filter.Service != "" && log.Service != cfg.Filter.Service {
+					continue
+				}
+				if cfg.Filter.Level != "" && log.Level != cfg.Filter.Level {
+					continue
+				}
+
+				logKey := LogKey{
+					Service: log.Service,
+					Level:   log.Level,
+					Message: log.Message,
+				}
+				logSeries, ok := m.series[logKey]
+				if !ok {
+					return nil, fmt.Errorf("logKey %v not found in series", logKey)
+				}
+				entry, ok := logSeries[ts]
+				if !ok {
+					return nil, fmt.Errorf("timestamp %v not found in logKey series", ts)
+				}
+
+				allResults = append(allResults, InstantQueryResponse{
+					TimeStamp: ts,
+					Service:   log.Service,
+					Level:     log.Level,
+					Message:   log.Message,
+					Count:     uint64(entry.value),
+				})
+			}
+		}
+	} else {
+		lhsResults := make([]InstantQueryResponse, 0)
+		var err error
+		if cfg.Filter.LHS != nil {
+			lhsCfg := *cfg
+			lhsCfg.Filter = *cfg.Filter.LHS
+			lhsResults, err = m.getInstantQueryResponse(&lhsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query LHS: %w", err)
+			}
+		}
+
+		rhsResults := make([]InstantQueryResponse, 0)
+		if cfg.Filter.RHS != nil {
+			rhsCfg := *cfg
+			rhsCfg.Filter = *cfg.Filter.RHS
+			rhsResults, err = m.getInstantQueryResponse(&rhsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query RHS: %w", err)
+			}
+		}
+
+		if cfg.Filter.Or {
+			allResults = append(allResults, lhsResults...)
+			allResults = append(allResults, rhsResults...)
+		} else {
+			rhsMap := make(map[string]struct{})
+			for _, r := range rhsResults {
+				key := r.Service + "|" + r.Level + "|" + r.Message
+				rhsMap[key] = struct{}{}
+			}
+			for _, r := range lhsResults {
+				key := r.Service + "|" + r.Level + "|" + r.Message
+				if _, ok := rhsMap[key]; ok {
+					allResults = append(allResults, r)
+				}
+			}
+		}
+	}
+	return allResults, nil
 }
