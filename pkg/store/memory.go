@@ -91,11 +91,9 @@ func (m *MemoryStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQ
 	var nextErr error
 	if m.next != nil {
 		if localStore, ok := (*m.next).(*LocalStore); ok {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				nextRes, nextErr = localStore.QueryInstant(cfg)
-			}()
+			})
 		}
 	}
 

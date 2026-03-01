@@ -112,12 +112,11 @@ func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, auth
 			cfg.QueueWorkers = 1 // default is 1
 		}
 
-		wg.Add(int(cfg.QueueWorkers))
 		for i := 0; i < int(cfg.QueueWorkers); i++ {
-			go func(workerID int) {
-				defer wg.Done()
+			workerID := i + 1
+			wg.Go(func() {
 				queue.StartWorker(ctx, *qCfg, serv.Store, workerID)
-			}(i + 1)
+			})
 		}
 	}
 
@@ -135,33 +134,26 @@ func StartServer(ctx context.Context, serv *LogIngestorServer, addr string, auth
 }
 
 func (s *LogIngestorServer) UploadLog(ctx context.Context, req *logapi.LogEntry) (*logapi.UploadResponse, error) {
-	s.mu.Lock()
 	if req == nil {
 		return nil, nil // Not a best way to handle this, but we will do it for now
 	}
 	if err := s.Store.Insert([]*logapi.LogEntry{req}, nil); err != nil {
 		return &logapi.UploadResponse{Success: false}, err
 	}
-	s.mu.Unlock()
 	return &logapi.UploadResponse{Success: true}, nil
 }
 
 func (s *LogIngestorServer) UploadLogs(ctx context.Context, req *logapi.LogBatch) (*logapi.UploadResponse, error) {
-	s.mu.Lock()
 	if req == nil {
 		return nil, nil // Not a best way to handle this, but we will do it for now
 	}
 	if err := s.Store.Insert(req.Entries, nil); err != nil {
 		return &logapi.UploadResponse{Success: false}, err
 	}
-	s.mu.Unlock()
 	return &logapi.UploadResponse{Success: true}, nil
 }
 
 func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]store.QueryResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.cfg.QueryTime = time.Now().Unix()
 
 	parse, err := logsgoql.ParseQuery(req.Query)
