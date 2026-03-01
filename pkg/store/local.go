@@ -54,8 +54,8 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 		metrics:       metrics,
 	}
 
-	// creata a meta.json file to store all unique labels for this store
-	dir, err := os.Create(fmt.Sprintf("%s/meta.json", opts.Dir))
+	// create a meta.json file to store all unique labels for this store
+	dir, err := os.OpenFile(fmt.Sprintf("%s/meta.json", opts.Dir), os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create meta.json file: %w", err)
 	}
@@ -131,11 +131,9 @@ func (l *LocalStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQu
 
 	if l.next != nil {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				bucketRes, bucketErr = bucketStore.QueryInstant(cfg)
-			}()
+			})
 		}
 	}
 
