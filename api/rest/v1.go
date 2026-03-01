@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	_ "net/http/pprof"
+
 	"github.com/Saumya40-codes/LogsGO/api/auth"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
@@ -140,6 +142,7 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 
 	// prometheus metrics
 	promHandler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+	r.GET("/debug/pprof/*any", gin.WrapH(http.DefaultServeMux)) // pprof serv
 	r.GET("/metrics", gin.WrapH(promHandler))
 
 	srv := &http.Server{

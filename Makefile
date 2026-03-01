@@ -18,7 +18,8 @@ build-react-app: ## Build React app
 	npm run build
 
 build-all: ## Build both frontend and backend
-	build-react-app build
+	make build-react-app && \
+	make build
 
 help:
 	@echo "Available targets:"
