@@ -4,6 +4,33 @@ import (
 	"strings"
 )
 
+type QueryContext struct {
+	StartTs  int64
+	EndTs    int64
+	Lookback int64
+}
+
+type Sample struct {
+	Timestamp int64
+	Count     uint64
+}
+
+type Series struct {
+	Service string
+	Level   string
+	Message string
+	Points  []Sample
+}
+
+// Each store should implement as Series() method
+type Store interface {
+	Series(ctx *QueryContext, expr Expr) ([]Series, error)
+}
+
+type Engine struct {
+	stores []Store
+}
+
 func ParseQuery(query string) (LogFilter, error) {
 	// This is a very basic parser, it only supports simple queries like "level=error | service=auth"
 	filter := LogFilter{}

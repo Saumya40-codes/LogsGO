@@ -238,6 +238,10 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	return nil
 }
 
+func (b *BucketStore) Series(queryCtx *logsgoql.QueryContext, expr logsgoql.Expr) ([]logsgoql.Series, error) {
+	return nil, nil
+}
+
 func (b *BucketStore) uploadLogsToStorage(batch *logapi.SeriesBatch, objectName string) error {
 	b.metrics.BucketCalls.Inc()
 	data, err := proto.Marshal(batch)

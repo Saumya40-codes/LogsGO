@@ -83,6 +83,10 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 	return nil
 }
 
+func (m *MemoryStore) Series(queryCtx *logsgoql.QueryContext, expr logsgoql.Expr) ([]logsgoql.Series, error) {
+	return nil, nil
+}
+
 func (m *MemoryStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
 	var wg sync.WaitGroup
 

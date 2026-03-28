@@ -93,6 +93,11 @@ func (p *Parser) parsePrimary() Expr {
 			return nil
 		}
 		op := p.currToken.Type
+
+		// CONTAINS will require inverted indexes across our stores. TODO: add support for CONTAINS
+		if op == CONTAINS {
+			p.err = append(p.err, fmt.Errorf("CONTAINS not supported in v1"))
+		}
 		p.nextToken()
 
 		// value check.... hmm notice that according to grammer we do allow ident on RHS of equals in case like level=warn (note: value isnt in quotation)

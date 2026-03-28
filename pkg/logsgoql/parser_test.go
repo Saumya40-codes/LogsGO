@@ -74,6 +74,7 @@ func TestParser(t *testing.T) {
 					Value:    "failed",
 				},
 			},
+			expectedErr: true,
 		},
 		{
 			input:       "service=\"ap-south1\" YOLO message CONTAINS \"failed\"",
@@ -87,7 +88,7 @@ func TestParser(t *testing.T) {
 		},
 		{
 			// YOLO one
-			input: "service=service AND message CONTAINS message",
+			input: "service=service AND message = message",
 			expected: &BinaryExpr{
 				Left: &ConditionExpr{
 					Ident:    "service",
@@ -97,7 +98,7 @@ func TestParser(t *testing.T) {
 				Operator: AND,
 				Right: &ConditionExpr{
 					Ident:    "message",
-					Operator: CONTAINS,
+					Operator: EQ,
 					Value:    "message",
 				},
 			},
