@@ -123,6 +123,10 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 	return nil
 }
 
+func (l *LocalStore) Series(queryCtx *logsgoql.QueryContext, expr logsgoql.Expr) ([]logsgoql.Series, error) {
+	return nil, nil
+}
+
 func (l *LocalStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
 	var wg sync.WaitGroup
 	// start querying next store concurrently if exists

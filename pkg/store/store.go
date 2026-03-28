@@ -23,6 +23,7 @@ type Store interface {
 	Flush() error
 	Close() error
 	LabelValues(labels *Labels) error // Returns all the unique label values for services and levels
+	Series(queryCtx *logsgoql.QueryContext, expr logsgoql.Expr) ([]logsgoql.Series, error)
 	// TODO: Find what else we need here
 }
 
