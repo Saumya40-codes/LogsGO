@@ -10,24 +10,36 @@ type Parser struct {
 }
 
 func NewParser(l *Lexer) *Parser {
-	p := &Parser{
-		l: l,
-	}
+	p := &Parser{l: l}
 
-	// prefill the next and peek token
-	p.NextToken()
-	p.NextToken()
+	// initialize curr + peek
+	p.nextToken()
+	p.nextToken()
 
 	return p
 }
 
-func (p *Parser) NextToken() {
+func (p *Parser) nextToken() {
 	p.currToken = p.peekToken
 	p.peekToken = p.l.NextToken()
+
+	if p.currToken.Type == ILLEGAL {
+		p.err = append(p.err, fmt.Errorf("illegal token: %s", p.currToken.Literal))
+	}
+}
+
+func (p *Parser) Errors() []error {
+	return p.err
 }
 
 func (p *Parser) ParseExpression() Expr {
-	return p.parseOr()
+	expr := p.parseOr()
+
+	if p.currToken.Type != EOF {
+		p.err = append(p.err, fmt.Errorf("unexpected token at end: %s", p.currToken.Type))
+	}
+
+	return expr
 }
 
 func (p *Parser) parseOr() Expr {
@@ -35,10 +47,11 @@ func (p *Parser) parseOr() Expr {
 
 	for p.currToken.Type == OR {
 		op := p.currToken.Type
-		p.NextToken()
+		p.nextToken()
+
 		right := p.parseAnd()
 
-		return &BinaryExpr{
+		left = &BinaryExpr{
 			Left:     left,
 			Operator: op,
 			Right:    right,
@@ -53,10 +66,11 @@ func (p *Parser) parseAnd() Expr {
 
 	for p.currToken.Type == AND {
 		op := p.currToken.Type
-		p.NextToken()
+		p.nextToken()
+
 		right := p.parsePrimary()
 
-		return &BinaryExpr{
+		left = &BinaryExpr{
 			Left:     left,
 			Operator: op,
 			Right:    right,
@@ -68,33 +82,53 @@ func (p *Parser) parseAnd() Expr {
 
 func (p *Parser) parsePrimary() Expr {
 	switch p.currToken.Type {
+
 	case IDENT:
 		field := p.currToken.Literal
-		p.NextToken()
+		p.nextToken()
 
+		// operator check
+		if p.currToken.Type != EQ && p.currToken.Type != CONTAINS {
+			p.err = append(p.err, fmt.Errorf("expected operator after IDENT, got %s", p.currToken.Type))
+			return nil
+		}
 		op := p.currToken.Type
-		p.NextToken()
+		p.nextToken()
 
+		// value check.... hmm notice that according to grammer we do allow ident on RHS of equals in case like level=warn (note: value isnt in quotation)
+		// this might be false negative when something like level=level is used but again we assert that if RHS of EQUAL is right word expr then it might be the right value
+		if p.currToken.Type != STRING && p.currToken.Type != IDENT {
+			p.err = append(p.err, fmt.Errorf("expected value after operator, got %s", p.currToken.Type))
+			return nil
+		}
 		val := p.currToken.Literal
-		p.NextToken()
+		p.nextToken()
 
 		return &ConditionExpr{
 			Ident:    field,
 			Operator: op,
 			Value:    val,
 		}
+
 	case LPAREN:
-		p.NextToken()
-		expr := p.ParseExpression()
+		p.nextToken()
+
+		expr := p.parseOr()
 
 		if p.currToken.Type != RPAREN {
 			p.err = append(p.err, fmt.Errorf("expected RPAREN, got %s", p.currToken.Type))
 			return nil
 		}
-		p.NextToken()
+		p.nextToken()
 
 		return expr
-	}
 
-	return nil
+	case ILLEGAL:
+		p.err = append(p.err, fmt.Errorf("illegal token: %s", p.currToken.Literal))
+		return nil
+
+	default:
+		p.err = append(p.err, fmt.Errorf("unexpected token: %s", p.currToken.Type))
+		return nil
+	}
 }
