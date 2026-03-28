@@ -3,6 +3,8 @@ name: Summarize new issues
 on:
   issues:
     types: [opened]
+  pull_request:
+    types: [opened]
 
 jobs:
   summary:
@@ -27,8 +29,13 @@ jobs:
 
       - name: Comment with AI summary
         run: |
-          gh issue comment $ISSUE_NUMBER --body '${{ steps.inference.outputs.response }}'
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh pr comment "$PR_NUMBER" --body "$RESPONSE"
+          else
+            gh issue comment "$ISSUE_NUMBER" --body "$RESPONSE"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           RESPONSE: ${{ steps.inference.outputs.response }}
