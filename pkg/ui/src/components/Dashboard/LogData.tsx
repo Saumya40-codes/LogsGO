@@ -15,9 +15,9 @@ const LogData = ({ logs }: { logs: LogsPayload[] }) => {
         <Table.Td>{log.Level}</Table.Td>
         <Table.Td>{log.Message}</Table.Td>
         <Table.Td>
-            {log.Series.map((series, idx) => (
+            {log.Points.map((point, idx) => (
                 <div key={idx}>
-                    {series.Count} : {series.Timestamp}
+                    {point.Count} : {point.Timestamp}
                 </div>
             ))}
         </Table.Td>

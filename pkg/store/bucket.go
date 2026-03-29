@@ -9,7 +9,9 @@ import (
 	"log"
 	"os"
 	"slices"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -238,6 +240,412 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	return nil
 }
 
+func (b *BucketStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
+	iterStart, iterEnd := seriesIterWindow(queryCtx)
+
+	seriesByKey := make(map[LogKey][]logsgoql.Sample)
+
+	blocks, err := b.selectBlocksForWindow(plan, iterStart, iterEnd)
+	if err != nil {
+		return nil, err
+	}
+	for _, blk := range blocks {
+		if err := b.appendSeriesFromBlock(plan, iterStart, iterEnd, blk.key, seriesByKey); err != nil {
+			return nil, err
+		}
+	}
+
+	results := make([]logsgoql.Series, 0, len(seriesByKey))
+	for k, pts := range seriesByKey {
+		sort.Slice(pts, func(i, j int) bool { return pts[i].Timestamp < pts[j].Timestamp })
+		pts = compactSamplesByTimestamp(pts)
+
+		results = append(results, logsgoql.Series{
+			Service: k.Service,
+			Level:   k.Level,
+			Message: k.Message,
+			Points:  pts,
+		})
+	}
+
+	return results, nil
+}
+
+func (b *BucketStore) appendSeriesFromBlock(plan *logsgoql.Plan, iterStart, iterEnd int64, blockKey string, seriesByKey map[LogKey][]logsgoql.Sample) error {
+	entries, err := b.loadSeriesFromBlock(blockKey)
+	if err != nil {
+		return err
+	}
+
+	for _, e := range entries {
+		if e == nil || e.Entry == nil {
+			continue
+		}
+		ts := e.Entry.Timestamp
+		if ts < iterStart || ts > iterEnd {
+			continue
+		}
+
+		service := e.Entry.Service
+		level := e.Entry.Level
+		message := e.Entry.Message
+
+		matched, err := plan.Match(logsgoql.EntryLabels{
+			Service: service,
+			Level:   level,
+			Message: message,
+		})
+		if err != nil {
+			return err
+		}
+		if !matched {
+			continue
+		}
+
+		logKey := LogKey{Service: service, Level: level, Message: message}
+		seriesByKey[logKey] = append(seriesByKey[logKey], logsgoql.Sample{
+			Timestamp: ts,
+			Count:     e.Count,
+		})
+	}
+	return nil
+}
+
+// requiredServiceValues returns a list of service values when the plan implies the query
+// must match one of those services.
+//
+// This is used as a safe pushdown optimization for bucket queries. Returns
+// (nil,false) when the query is not safely service-constrained.
+func requiredServiceValues(n logsgoql.Node) ([]string, bool) {
+	set, ok := requiredServiceSet(n)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(set))
+	for s := range set {
+		out = append(out, s)
+	}
+	return out, true
+}
+
+func requiredServiceSet(n logsgoql.Node) (map[string]struct{}, bool) {
+	switch x := n.(type) {
+	case *logsgoql.MatchNode:
+		if x.Field == logsgoql.FieldService && x.Op == logsgoql.MatchEq {
+			return map[string]struct{}{x.Value: {}}, true
+		}
+		return nil, false
+	case *logsgoql.BinaryNode:
+		left, leftOK := requiredServiceSet(x.Left)
+		right, rightOK := requiredServiceSet(x.Right)
+
+		switch x.Op {
+		case logsgoql.OpAnd:
+			switch {
+			case leftOK && rightOK:
+				// Intersection.
+				if len(left) == 0 || len(right) == 0 {
+					return map[string]struct{}{}, true
+				}
+				out := make(map[string]struct{})
+				for s := range left {
+					if _, ok := right[s]; ok {
+						out[s] = struct{}{}
+					}
+				}
+				return out, true
+			case leftOK:
+				return left, true
+			case rightOK:
+				return right, true
+			default:
+				return nil, false
+			}
+		case logsgoql.OpOr:
+			if !leftOK || !rightOK {
+				return nil, false
+			}
+			// Union.
+			out := make(map[string]struct{}, len(left)+len(right))
+			for s := range left {
+				out[s] = struct{}{}
+			}
+			for s := range right {
+				out[s] = struct{}{}
+			}
+			return out, true
+		default:
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+}
+
+func parseBlockKey(key string) (minT, maxT int64, service string, ok bool) {
+	parts := strings.SplitN(key, "/", 2)
+	if len(parts) != 2 {
+		return 0, 0, "", false
+	}
+	rng := strings.SplitN(parts[0], "-", 2)
+	if len(rng) != 2 {
+		return 0, 0, "", false
+	}
+	minV, err := strconv.ParseInt(rng[0], 10, 64)
+	if err != nil {
+		return 0, 0, "", false
+	}
+	maxV, err := strconv.ParseInt(rng[1], 10, 64)
+	if err != nil {
+		return 0, 0, "", false
+	}
+	name := parts[1]
+	u := strings.IndexByte(name, '_')
+	if u <= 0 {
+		return 0, 0, "", false
+	}
+	svc := name[:u]
+	return minV, maxV, svc, true
+}
+
+type bucketBlockInfo struct {
+	key  string
+	minT int64
+	maxT int64
+}
+
+func (b *BucketStore) selectBlocksForWindow(plan *logsgoql.Plan, iterStart, iterEnd int64) ([]bucketBlockInfo, error) {
+	// Decide which services to consider without listing all objects if possible.
+	services, servicesConstrained := requiredServiceValues(plan.Root)
+	if servicesConstrained && len(services) == 0 {
+		// Query implies an impossible service constraint (e.g. service="a" AND service="b").
+		return nil, nil
+	}
+
+	// If we aren't service constrained, try to enumerate services from meta.json first.
+	if !servicesConstrained {
+		meta, err := b.GetMetaData()
+		if err == nil && meta != nil && len(meta.Services) > 0 {
+			for svc := range meta.Services {
+				services = append(services, svc)
+			}
+			sort.Strings(services)
+			servicesConstrained = true
+		}
+	}
+
+	var blocks []bucketBlockInfo
+	var fallbackServices []string
+
+	if servicesConstrained && len(services) > 0 {
+		seen := make(map[string]struct{})
+		for _, svc := range services {
+			entries, err := b.findBestCompactedBlocks(svc, iterStart, iterEnd)
+			if err != nil || entries == nil {
+				fallbackServices = append(fallbackServices, svc)
+				continue
+			}
+			for _, e := range entries {
+				if _, ok := seen[e.Key]; ok {
+					continue
+				}
+				seen[e.Key] = struct{}{}
+				blocks = append(blocks, bucketBlockInfo{key: e.Key, minT: e.MinTS, maxT: e.MaxTS})
+			}
+		}
+	}
+
+	// Fallback: list objects when we couldn't get full coverage via compacted blocks.
+	if !servicesConstrained || len(fallbackServices) > 0 {
+		fallbackSet := make(map[string]struct{})
+		if servicesConstrained {
+			for _, svc := range fallbackServices {
+				fallbackSet[svc] = struct{}{}
+			}
+		}
+
+		seen := make(map[string]struct{}, len(blocks))
+		for _, bi := range blocks {
+			seen[bi.key] = struct{}{}
+		}
+
+		objectCh := b.client.ListObjects(b.ctx, b.config.Bucket, minio.ListObjectsOptions{
+			Recursive: true,
+		})
+
+		for object := range objectCh {
+			if object.Err != nil {
+				return nil, object.Err
+			}
+			if !strings.HasSuffix(object.Key, ".pb") {
+				continue
+			}
+			minT, maxT, svc, ok := parseBlockKey(object.Key)
+			if ok {
+				if maxT < iterStart || minT > iterEnd {
+					continue
+				}
+				if servicesConstrained {
+					if _, keep := fallbackSet[svc]; !keep {
+						continue
+					}
+				}
+			} else if servicesConstrained {
+				continue
+			}
+			if _, ok := seen[object.Key]; ok {
+				continue
+			}
+			seen[object.Key] = struct{}{}
+			blocks = append(blocks, bucketBlockInfo{key: object.Key, minT: minT, maxT: maxT})
+		}
+	}
+
+	sort.Slice(blocks, func(i, j int) bool {
+		// When minT isn't known (0), fall back to key ordering.
+		if blocks[i].minT == blocks[j].minT {
+			return blocks[i].key < blocks[j].key
+		}
+		return blocks[i].minT < blocks[j].minT
+	})
+
+	return blocks, nil
+}
+
+func (b *BucketStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error) {
+	if resolution <= 0 || queryCtx.EndTs == queryCtx.StartTs {
+		return b.Series(queryCtx, plan)
+	}
+
+	iterStart, iterEnd := seriesIterWindow(queryCtx)
+
+	steps := make([]int64, 0, 1+((queryCtx.EndTs-queryCtx.StartTs)/resolution))
+	for t := queryCtx.StartTs; t <= queryCtx.EndTs; t += resolution {
+		steps = append(steps, t)
+	}
+	if len(steps) == 0 {
+		return nil, nil
+	}
+
+	blocks, err := b.selectBlocksForWindow(plan, iterStart, iterEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	type rangeState struct {
+		nextStep int
+		hasLast  bool
+		lastTs   int64
+		lastVal  uint64
+	}
+
+	stateByKey := make(map[LogKey]*rangeState)
+	outByKey := make(map[LogKey][]logsgoql.Sample)
+
+	for _, blk := range blocks {
+		entries, err := b.loadSeriesFromBlock(blk.key)
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i] == nil || entries[i].Entry == nil {
+				return false
+			}
+			if entries[j] == nil || entries[j].Entry == nil {
+				return true
+			}
+			return entries[i].Entry.Timestamp < entries[j].Entry.Timestamp
+		})
+
+		for _, e := range entries {
+			if e == nil || e.Entry == nil {
+				continue
+			}
+			ts := e.Entry.Timestamp
+			if ts < iterStart || ts > iterEnd {
+				continue
+			}
+
+			service := e.Entry.Service
+			level := e.Entry.Level
+			message := e.Entry.Message
+
+			matched, err := plan.Match(logsgoql.EntryLabels{
+				Service: service,
+				Level:   level,
+				Message: message,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if !matched {
+				continue
+			}
+
+			key := LogKey{Service: service, Level: level, Message: message}
+			st := stateByKey[key]
+			if st == nil {
+				st = &rangeState{}
+				stateByKey[key] = st
+			}
+
+			// Finalize steps strictly before this sample using the previous last value.
+			for st.nextStep < len(steps) && steps[st.nextStep] < ts {
+				stepT := steps[st.nextStep]
+				minT := stepT - queryCtx.Lookback
+				if minT < 0 {
+					minT = 0
+				}
+				if st.hasLast && st.lastTs >= minT {
+					outByKey[key] = append(outByKey[key], logsgoql.Sample{
+						Timestamp: stepT,
+						Count:     st.lastVal,
+					})
+				}
+				st.nextStep++
+			}
+
+			st.hasLast = true
+			st.lastTs = ts
+			st.lastVal = e.Count
+		}
+	}
+
+	// Finalize remaining steps after processing all samples.
+	for key, st := range stateByKey {
+		for st.nextStep < len(steps) {
+			stepT := steps[st.nextStep]
+			minT := stepT - queryCtx.Lookback
+			if minT < 0 {
+				minT = 0
+			}
+			if st.hasLast && st.lastTs <= stepT && st.lastTs >= minT {
+				outByKey[key] = append(outByKey[key], logsgoql.Sample{
+					Timestamp: stepT,
+					Count:     st.lastVal,
+				})
+			}
+			st.nextStep++
+		}
+	}
+
+	results := make([]logsgoql.Series, 0, len(outByKey))
+	for k, pts := range outByKey {
+		pts = compactSamplesByTimestamp(pts)
+		if len(pts) == 0 {
+			continue
+		}
+		results = append(results, logsgoql.Series{
+			Service: k.Service,
+			Level:   k.Level,
+			Message: k.Message,
+			Points:  pts,
+		})
+	}
+
+	return results, nil
+}
+
 func (b *BucketStore) uploadLogsToStorage(batch *logapi.SeriesBatch, objectName string) error {
 	b.metrics.BucketCalls.Inc()
 	data, err := proto.Marshal(batch)
@@ -294,154 +702,6 @@ func (b *BucketStore) LabelValues(labels *Labels) error {
 		}
 	}
 
-	return nil
-}
-
-func (b *BucketStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
-	cfg.Cache.BucketOnce.Do(func() {
-		// Fast-path: if query is service-scoped, try index to find compacted blocks covering the range
-		if cfg.Filter.Service != "" {
-			minT := cfg.Ts - cfg.Lookback
-			maxT := cfg.Ts
-			if entries, err := b.findBestCompactedBlocks(cfg.Filter.Service, minT, maxT); err == nil && entries != nil {
-				var all []*logapi.Series
-				ok := true
-				for _, e := range entries {
-					s, err := b.loadSeriesFromBlock(e.Key)
-					if err != nil {
-						ok = false
-						break
-					}
-					all = append(all, s...)
-				}
-				if ok {
-					cfg.Cache.BucketData = all
-					slices.SortFunc(cfg.Cache.BucketData, func(a, b *logapi.Series) int {
-						if a.Entry.Timestamp < b.Entry.Timestamp {
-							return 1
-						}
-						if a.Entry.Timestamp > b.Entry.Timestamp {
-							return -1
-						}
-						return 0
-					})
-					// fast-path succeeded
-					return
-				}
-			}
-			// fallthrough to full fetch on error or no entries
-		}
-
-		b.fetchLogs(&cfg.Cache.BucketData)
-		slices.SortFunc(cfg.Cache.BucketData, func(a, b *logapi.Series) int {
-			if a.Entry.Timestamp < b.Entry.Timestamp {
-				return 1
-			}
-			if a.Entry.Timestamp > b.Entry.Timestamp {
-				return -1
-			}
-			return 0
-		})
-	})
-
-	var result []InstantQueryResponse
-
-	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
-		for _, log := range cfg.Cache.BucketData {
-			// break this log if it falls outside lookback period, we sort above so this is fine
-			if cfg.Ts-cfg.Lookback > log.Entry.Timestamp {
-				break
-			}
-			if (cfg.Filter.Level == "" || log.Entry.Level == cfg.Filter.Level) && (cfg.Filter.Service == "" || log.Entry.Service == cfg.Filter.Service) {
-				result = append(result, InstantQueryResponse{
-					Service:   log.Entry.Service,
-					Level:     log.Entry.Level,
-					Message:   log.Entry.Message,
-					Count:     log.Count,
-					TimeStamp: log.Entry.Timestamp,
-				})
-			}
-		}
-	} else {
-		lhsResults := make([]InstantQueryResponse, 0)
-		var err error
-		if cfg.Filter.LHS != nil {
-			lhsCfg := *cfg
-			lhsCfg.Filter = *cfg.Filter.LHS
-			lhsResults, err = b.QueryInstant(&lhsCfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query LHS: %w", err)
-			}
-		}
-
-		rhsResults := make([]InstantQueryResponse, 0)
-		if cfg.Filter.RHS != nil {
-			rhsCfg := *cfg
-			rhsCfg.Filter = *cfg.Filter.RHS
-			rhsResults, err = b.QueryInstant(&rhsCfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query RHS: %w", err)
-			}
-		}
-
-		if cfg.Filter.Or {
-			result = append(result, lhsResults...)
-			result = append(result, rhsResults...)
-		} else {
-			rhsMap := make(map[string]InstantQueryResponse)
-			for _, r := range rhsResults {
-				key := r.Service + "|" + r.Level + "|" + strconv.FormatInt(r.TimeStamp, 10)
-				rhsMap[key] = r
-			}
-			for _, l := range lhsResults {
-				key := l.Service + "|" + l.Level + "|" + strconv.FormatInt(l.TimeStamp, 10)
-				if _, exists := rhsMap[key]; exists {
-					result = append(result, l)
-				}
-			}
-		}
-	}
-	return result, nil
-}
-
-func (b *BucketStore) QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryResponse, error) {
-	return nil, nil
-}
-
-func (b *BucketStore) fetchLogs(logs *[]*logapi.Series) error {
-	b.metrics.BucketCalls.Inc()
-	// var results []*logapi.LogEntry
-	ctx := b.ctx
-
-	objectCh := b.client.ListObjects(ctx, b.config.Bucket, minio.ListObjectsOptions{
-		Recursive: true,
-	})
-
-	for object := range objectCh {
-		if object.Err != nil {
-			return object.Err
-		}
-
-		// TODO: utilize the key name we set to fetch stuffs
-		obj, err := b.client.GetObject(ctx, b.config.Bucket, object.Key, minio.GetObjectOptions{})
-		if err != nil {
-			return err
-		}
-
-		data, err := io.ReadAll(obj)
-		if err != nil {
-			return err
-		}
-
-		batch := &logapi.SeriesBatch{}
-		if err := proto.Unmarshal(data, batch); err != nil {
-			return err
-		}
-
-		if len(batch.Entries) > 0 {
-			*logs = append(*logs, batch.Entries...)
-		}
-	}
 	return nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,35 +124,135 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 	return nil
 }
 
-func (l *LocalStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
-	var wg sync.WaitGroup
-	// start querying next store concurrently if exists
-	var bucketRes []InstantQueryResponse
-	var bucketErr error
-
-	if l.next != nil {
-		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			wg.Go(func() {
-				bucketRes, bucketErr = bucketStore.QueryInstant(cfg)
-			})
-		}
-	}
-
-	results, err := l.getInstantQueryResponse(cfg)
-	wg.Wait()
-	if err != nil {
-		return nil, fmt.Errorf("failed to query local store: %w", err)
-	}
-	if bucketErr != nil {
-		return nil, fmt.Errorf("failed to query bucket store: %w", bucketErr)
-	}
-
-	results = append(results, bucketRes...)
-	return results, nil
+func (l *LocalStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
+	return tieredSeries(queryCtx, plan, 0, l.next, func() ([]logsgoql.Series, error) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.getSeries(queryCtx, plan)
+	})
 }
 
-func (l *LocalStore) QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryResponse, error) {
-	return nil, nil
+func (l *LocalStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error) {
+	return tieredSeries(queryCtx, plan, resolution, l.next, func() ([]logsgoql.Series, error) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.getSeries(queryCtx, plan)
+	})
+}
+
+func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
+	iterStart, iterEnd := seriesIterWindow(queryCtx)
+
+	seriesByKey := make(map[LogKey][]logsgoql.Sample)
+
+	txn := l.db.Conn.NewTransaction(false)
+	defer txn.Discard()
+
+	opts := badger.DefaultIteratorOptions
+	levelSet, levelOK := requiredEqSet(plan.Root, logsgoql.FieldLevel)
+	if levelOK && len(levelSet) == 0 {
+		return nil, nil
+	}
+	serviceSet, serviceOK := requiredEqSet(plan.Root, logsgoql.FieldService)
+	if serviceOK && len(serviceSet) == 0 {
+		return nil, nil
+	}
+
+	prefix := ""
+	if levelOK && len(levelSet) == 1 {
+		// prefix scan is possible
+		for lvl := range levelSet {
+			prefix = lvl + "|"
+		}
+		if serviceOK && len(serviceSet) == 1 {
+			for svc := range serviceSet {
+				prefix = prefix + svc + "|"
+			}
+		}
+		opts.Prefix = []byte(prefix)
+		opts.PrefetchValues = true
+	} else {
+		opts.PrefetchValues = false
+	}
+	it := txn.NewIterator(opts)
+	defer it.Close()
+
+	usesMessage := planUsesField(plan.Root, logsgoql.FieldMessage)
+
+	for it.Rewind(); it.Valid(); it.Next() {
+		item := it.Item()
+		k := string(item.Key())
+
+		tokens := strings.Split(k, "|")
+		if len(tokens) < 4 {
+			continue
+		}
+		level, service := tokens[0], tokens[1]
+		encodedMessage := tokens[2]
+		ts, err := strconv.ParseInt(tokens[3], 10, 64)
+		if err != nil {
+			continue
+		}
+		if ts < iterStart || ts > iterEnd {
+			continue
+		}
+
+		messageForMatch := ""
+		if usesMessage {
+			msg, err := DecodeMessage(encodedMessage)
+			if err != nil {
+				continue
+			}
+			messageForMatch = msg
+		}
+
+		matched, err := plan.Match(logsgoql.EntryLabels{Service: service, Level: level, Message: messageForMatch})
+		if err != nil {
+			return nil, err
+		}
+		if !matched {
+			continue
+		}
+
+		message := messageForMatch
+		if !usesMessage {
+			msg, err := DecodeMessage(encodedMessage)
+			if err != nil {
+				continue
+			}
+			message = msg
+		}
+
+		valCopy, err := item.ValueCopy(nil)
+		if err != nil {
+			continue
+		}
+		countVal, err := strconv.ParseUint(string(valCopy), 10, 64)
+		if err != nil {
+			continue
+		}
+
+		logKey := LogKey{Service: service, Level: level, Message: message}
+		seriesByKey[logKey] = append(seriesByKey[logKey], logsgoql.Sample{
+			Timestamp: ts,
+			Count:     countVal,
+		})
+	}
+
+	results := make([]logsgoql.Series, 0, len(seriesByKey))
+	for k, pts := range seriesByKey {
+		sort.Slice(pts, func(i, j int) bool { return pts[i].Timestamp < pts[j].Timestamp })
+		pts = compactSamplesByTimestamp(pts)
+
+		results = append(results, logsgoql.Series{
+			Service: k.Service,
+			Level:   k.Level,
+			Message: k.Message,
+			Points:  pts,
+		})
+	}
+
+	return results, nil
 }
 
 func (l *LocalStore) Flush() error {
@@ -270,110 +371,6 @@ func (l *LocalStore) Flush() error {
 
 	l.db.RunGC()
 	return nil
-}
-
-func (l *LocalStore) getInstantQueryResponse(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
-	var results []InstantQueryResponse
-	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
-		prefix := ""
-		if cfg.Filter.Level != "" && cfg.Filter.Service != "" {
-			prefix = fmt.Sprintf("%s|%s", cfg.Filter.Level, cfg.Filter.Service)
-		} else if cfg.Filter.Level != "" {
-			prefix = fmt.Sprintf("%s|", cfg.Filter.Level)
-		} else if cfg.Filter.Service != "" {
-			prefix = fmt.Sprintf(".*|%s", cfg.Filter.Service)
-		}
-
-		cfg.Cache.LocalOnce.Do(func() {
-			cfg.Cache.LocalKeys, cfg.Cache.LocalVals, cfg.Cache.LocalErr = l.db.PrefixScan(prefix)
-		})
-
-		if cfg.Cache.LocalErr != nil {
-			if cfg.Cache.LocalErr == badger.ErrKeyNotFound {
-				return nil, fmt.Errorf("no logs found for the given filter: %w", cfg.Cache.LocalErr)
-			}
-			return nil, fmt.Errorf("failed to query logs: %w", cfg.Cache.LocalErr)
-		}
-
-		nearestT := -1
-		for i, k := range cfg.Cache.LocalKeys {
-			tokens := strings.Split(k, "|")
-			if len(tokens) < 4 {
-				continue // Invalid key format
-			}
-			timestamp, err := strconv.Atoi(tokens[3])
-			if err != nil {
-				return nil, fmt.Errorf("invalid timestamp in key %s: %w", k, err)
-			}
-
-			// skip this sample if it falls outside time range
-			timeDiff := cfg.Ts - cfg.Lookback
-			if timeDiff > int64(timestamp) {
-				continue
-			}
-			level := tokens[0]
-			service := tokens[1]
-			message, err := DecodeMessage(tokens[2])
-			if err != nil {
-				return nil, err
-			}
-			counterVal, err := strconv.Atoi(cfg.Cache.LocalVals[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid count in value %s: %w", cfg.Cache.LocalVals[i], err)
-			}
-
-			if ((cfg.Filter.Level != "" && level == cfg.Filter.Level) || (cfg.Filter.Service != "" && service == cfg.Filter.Service)) && (timestamp > nearestT) {
-				nearestT = timestamp
-				results = append(results, InstantQueryResponse{
-					TimeStamp: int64(timestamp),
-					Level:     level,
-					Service:   service,
-					Message:   message,
-					Count:     uint64(counterVal),
-				})
-			}
-		}
-	} else {
-		lhsResults := make([]InstantQueryResponse, 0)
-		var err error
-		if cfg.Filter.LHS != nil {
-			lhsCfg := *cfg
-			lhsCfg.Filter = *cfg.Filter.LHS
-			lhsResults, err = l.getInstantQueryResponse(&lhsCfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query LHS: %w", err)
-			}
-		}
-
-		rhsResults := make([]InstantQueryResponse, 0)
-		if cfg.Filter.RHS != nil {
-			rhsCfg := *cfg
-			rhsCfg.Filter = *cfg.Filter.RHS
-			rhsResults, err = l.getInstantQueryResponse(&rhsCfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query RHS: %w", err)
-			}
-		}
-
-		if cfg.Filter.Or {
-			results = append(results, lhsResults...)
-			results = append(results, rhsResults...)
-		} else {
-			// Intersect the results
-			rhsMap := make(map[string]struct{})
-			for _, r := range rhsResults {
-				key := r.Service + "|" + r.Level + "|" + r.Message
-				rhsMap[key] = struct{}{}
-			}
-			for _, r := range lhsResults {
-				key := r.Service + "|" + r.Level + "|" + r.Message
-				if _, ok := rhsMap[key]; ok {
-					results = append(results, r)
-				}
-			}
-		}
-	}
-	return results, nil
 }
 
 func (l *LocalStore) Close() error {

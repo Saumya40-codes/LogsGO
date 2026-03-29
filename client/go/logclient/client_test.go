@@ -14,6 +14,7 @@ import (
 	"github.com/Saumya40-codes/LogsGO/api/rest"
 	"github.com/Saumya40-codes/LogsGO/internal/ingestion"
 	"github.com/Saumya40-codes/LogsGO/pkg"
+	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/efficientgo/core/testutil"
@@ -74,7 +75,7 @@ func verifyLogs(t *testing.T, url string, expected []expectedLog) {
 	defer resp.Body.Close()
 	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status 200 OK, got %d", resp.StatusCode)
 
-	var actual []store.QueryResponse
+	var actual []logsgoql.Series
 	err = json.NewDecoder(resp.Body).Decode(&actual)
 	testutil.Ok(t, err, "Failed to decode query response")
 
@@ -84,7 +85,7 @@ func verifyLogs(t *testing.T, url string, expected []expectedLog) {
 		found := false
 		for _, act := range actual {
 			if act.Level == exp.Level && act.Service == exp.Service && act.Message == exp.Message {
-				testutil.Assert(t, act.Series[0].Count == uint64(exp.Count), "Expected count %d, got %d", exp.Count, act.Series[0].Count)
+				testutil.Assert(t, act.Points[0].Count == uint64(exp.Count), "Expected count %d, got %d", exp.Count, act.Points[0].Count)
 				found = true
 				break
 			}
@@ -327,7 +328,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 	testutil.Ok(t, err, "Failed to get query output from REST API after flushing")
 	defer resp.Body.Close()
 	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
-	var queryOutputAfterFlush []store.QueryResponse
+	var queryOutputAfterFlush []logsgoql.Series
 	decoder := json.NewDecoder(resp.Body)
 	err = decoder.Decode(&queryOutputAfterFlush)
 	testutil.Ok(t, err, "Failed to decode query output from response after flushing")
@@ -336,7 +337,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 		testutil.Assert(t, log.Level == "warn", "Expected log level 'warn', got '%s'", log.Level)
 		testutil.Assert(t, log.Service == "ap-south1", "Expected log service 'ap-south1', got '%s'", log.Service)
 		testutil.Assert(t, log.Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", log.Message)
-		testutil.Assert(t, log.Series[0].Count == 1, "Expected log counter to have value 1 got '%d'", log.Series[0].Count)
+		testutil.Assert(t, log.Points[0].Count == 1, "Expected log counter to have value 1 got '%d'", log.Points[0].Count)
 	}
 
 	base := "http://localhost:8080/api/v1/query"
@@ -418,7 +419,7 @@ func TestRangeQueries(t *testing.T) {
 	defer resp.Body.Close()
 	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
 
-	var queryOutput []store.QueryResponse
+	var queryOutput []logsgoql.Series
 	decoder := json.NewDecoder(resp.Body)
 	err = decoder.Decode(&queryOutput)
 
@@ -428,14 +429,14 @@ func TestRangeQueries(t *testing.T) {
 	testutil.Assert(t, queryOutput[0].Service == "ap-south1", "Expected log service 'ap-south1', got '%s'", queryOutput[0].Service)
 	testutil.Assert(t, queryOutput[0].Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", queryOutput[0].Message)
 
-	testutil.Assert(t, queryOutput[0].Series[0].Timestamp == queryStart, "Expected log timestamp to be %d, got %d", queryStart, queryOutput[0].Series[0].Timestamp)
-	testutil.Assert(t, queryOutput[0].Series[0].Count == 1, "Expected log counter to have value 1, got %d", queryOutput[0].Series[0].Count)
+	testutil.Assert(t, queryOutput[0].Points[0].Timestamp == queryStart, "Expected log timestamp to be %d, got %d", queryStart, queryOutput[0].Points[0].Timestamp)
+	testutil.Assert(t, queryOutput[0].Points[0].Count == 1, "Expected log counter to have value 1, got %d", queryOutput[0].Points[0].Count)
 
-	testutil.Assert(t, queryOutput[0].Series[1].Timestamp == queryStart+15*60, "Expected log timestamp to be %d, got %d", queryStart+15*60, queryOutput[0].Series[1].Timestamp)
-	testutil.Assert(t, queryOutput[0].Series[1].Count == 2, "Expected log counter to have value 2, got %d", queryOutput[0].Series[1].Count)
+	testutil.Assert(t, queryOutput[0].Points[1].Timestamp == queryStart+15*60, "Expected log timestamp to be %d, got %d", queryStart+15*60, queryOutput[0].Points[1].Timestamp)
+	testutil.Assert(t, queryOutput[0].Points[1].Count == 2, "Expected log counter to have value 2, got %d", queryOutput[0].Points[1].Count)
 
-	testutil.Assert(t, queryOutput[0].Series[2].Timestamp == queryStart+30*60, "Expected log timestamp to be %d, got %d", queryStart+30*60, queryOutput[0].Series[2].Timestamp)
-	testutil.Assert(t, queryOutput[0].Series[2].Count == 3, "Expected log counter to have value 3, got %d", queryOutput[0].Series[2].Count)
+	testutil.Assert(t, queryOutput[0].Points[2].Timestamp == queryStart+30*60, "Expected log timestamp to be %d, got %d", queryStart+30*60, queryOutput[0].Points[2].Timestamp)
+	testutil.Assert(t, queryOutput[0].Points[2].Count == 3, "Expected log counter to have value 3, got %d", queryOutput[0].Points[2].Count)
 }
 
 func TestUploadsBatch(t *testing.T) {
@@ -556,7 +557,7 @@ func TestCompaction(t *testing.T) {
 		testutil.Ok(t, err, "Failed to get query output from REST API after flushing")
 		defer resp.Body.Close()
 		testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
-		var queryOutputAfterFlush []store.QueryResponse
+		var queryOutputAfterFlush []logsgoql.Series
 		decoder := json.NewDecoder(resp.Body)
 		err = decoder.Decode(&queryOutputAfterFlush)
 		testutil.Ok(t, err, "Failed to decode query output from response after flushing")
