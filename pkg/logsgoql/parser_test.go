@@ -60,6 +60,30 @@ func TestParser(t *testing.T) {
 			},
 		},
 		{
+			input: "service=\"ap-south1\" AND message = \"failed to connect\" OR service=\"us-west1\"",
+			expected: &BinaryExpr{
+				Left: &BinaryExpr{
+					Left: &ConditionExpr{
+						Ident:    "service",
+						Operator: EQ,
+						Value:    "ap-south1",
+					},
+					Operator: AND,
+					Right: &ConditionExpr{
+						Ident:    "message",
+						Operator: EQ,
+						Value:    "failed to connect",
+					},
+				},
+				Operator: OR,
+				Right: &ConditionExpr{
+					Ident:    "service",
+					Operator: EQ,
+					Value:    "us-west1",
+				},
+			},
+		},
+		{
 			input: "service=\"ap-south1\" OR message CONTAINS \"failed\"",
 			expected: &BinaryExpr{
 				Left: &ConditionExpr{
@@ -110,7 +134,7 @@ func TestParser(t *testing.T) {
 		parser := NewParser(lexer)
 		result := parser.ParseExpression()
 		if !reflect.DeepEqual(result, query.expected) && !query.expectedErr {
-			t.Errorf("For input '%s', expected '%v', but got '%v'", query.input, query.expected, result)
+			t.Errorf("For input '%s'\n, expected '%v'\n, but got '%v'", query.input, query.expected.exprNode(), result.exprNode())
 		}
 		if query.expectedErr && len(parser.Errors()) == 0 {
 			t.Errorf("For input '%s', expected error but got none", query.input)
