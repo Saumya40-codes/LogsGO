@@ -149,9 +149,35 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 	defer txn.Discard()
 
 	opts := badger.DefaultIteratorOptions
-	opts.PrefetchValues = true
+	levelSet, levelOK := requiredEqSet(plan.Root, logsgoql.FieldLevel)
+	if levelOK && len(levelSet) == 0 {
+		return nil, nil
+	}
+	serviceSet, serviceOK := requiredEqSet(plan.Root, logsgoql.FieldService)
+	if serviceOK && len(serviceSet) == 0 {
+		return nil, nil
+	}
+
+	prefix := ""
+	if levelOK && len(levelSet) == 1 {
+		// prefix scan is possible
+		for lvl := range levelSet {
+			prefix = lvl + "|"
+		}
+		if serviceOK && len(serviceSet) == 1 {
+			for svc := range serviceSet {
+				prefix = prefix + svc + "|"
+			}
+		}
+		opts.Prefix = []byte(prefix)
+		opts.PrefetchValues = true
+	} else {
+		opts.PrefetchValues = false
+	}
 	it := txn.NewIterator(opts)
 	defer it.Close()
+
+	usesMessage := planUsesField(plan.Root, logsgoql.FieldMessage)
 
 	for it.Rewind(); it.Valid(); it.Next() {
 		item := it.Item()
@@ -162,10 +188,7 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 			continue
 		}
 		level, service := tokens[0], tokens[1]
-		message, err := DecodeMessage(tokens[2])
-		if err != nil {
-			continue
-		}
+		encodedMessage := tokens[2]
 		ts, err := strconv.ParseInt(tokens[3], 10, 64)
 		if err != nil {
 			continue
@@ -174,16 +197,30 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 			continue
 		}
 
-		matched, err := plan.Match(logsgoql.EntryLabels{
-			Service: service,
-			Level:   level,
-			Message: message,
-		})
+		messageForMatch := ""
+		if usesMessage {
+			msg, err := DecodeMessage(encodedMessage)
+			if err != nil {
+				continue
+			}
+			messageForMatch = msg
+		}
+
+		matched, err := plan.Match(logsgoql.EntryLabels{Service: service, Level: level, Message: messageForMatch})
 		if err != nil {
 			return nil, err
 		}
 		if !matched {
 			continue
+		}
+
+		message := messageForMatch
+		if !usesMessage {
+			msg, err := DecodeMessage(encodedMessage)
+			if err != nil {
+				continue
+			}
+			message = msg
 		}
 
 		valCopy, err := item.ValueCopy(nil)
