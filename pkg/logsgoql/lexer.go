@@ -40,6 +40,10 @@ func (l *Lexer) NextToken() Token {
 	switch l.ch {
 	case '=':
 		tok = NewToken(EQ, "=")
+	case '&':
+		tok = NewToken(AND, "&")
+	case '|':
+		tok = NewToken(OR, "|")
 	case '(':
 		tok = NewToken(LPAREN, "(")
 	case ')':

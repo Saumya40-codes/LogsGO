@@ -17,13 +17,12 @@ import (
 
 // Store interfaces defines the methods that any store implementation should provide.
 type Store interface {
-	QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) // Returns logs matching the filter
-	QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryResponse, error)            // Returns logs matching the filter in a range
 	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error
 	Flush() error
 	Close() error
 	LabelValues(labels *Labels) error // Returns all the unique label values for services and levels
-	Series(queryCtx *logsgoql.QueryContext, expr logsgoql.Expr) ([]logsgoql.Series, error)
+	Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error)
+	SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error)
 	// TODO: Find what else we need here
 }
 
@@ -31,34 +30,6 @@ type Labels struct {
 	Services map[string]int
 	Levels   map[string]int
 	// TODO: Add support for custom labels in the future
-}
-
-type Series struct {
-	Timestamp int64
-	Count     uint64
-}
-
-type QueryResponse struct {
-	Level   string
-	Service string
-	Message string
-	Series  []Series
-}
-
-type LogFilter struct {
-	Level   string
-	Service string
-	Or      bool
-	RHS     *LogFilter
-	LHS     *LogFilter
-}
-
-type InstantQueryResponse struct {
-	Level     string
-	Service   string
-	TimeStamp int64
-	Count     uint64
-	Message   string
 }
 
 // key used for mappings

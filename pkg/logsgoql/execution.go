@@ -4,59 +4,31 @@ import "sort"
 
 type Executor struct {
 	engine   Engine
-	queryCtx *QueryContext
+	queryCtx QueryContext
 }
 
-func NewExecutor(e Engine, queryCtx *QueryContext) *Executor {
+func NewExecutor(e Engine, queryCtx QueryContext) *Executor {
 	return &Executor{
 		engine:   e,
 		queryCtx: queryCtx,
 	}
 }
 
-func (e *Executor) Execute(expr Expr) ([]Series, error) {
-	var res []Series
-
-	for _, s := range e.engine.stores {
-		series, err := s.Series(e.queryCtx, expr)
-		if err != nil {
-			return nil, err
-		}
-		res = append(res, series...)
+func (e *Executor) Execute(plan *Plan) ([]Series, error) {
+	if e.engine.store == nil {
+		return nil, ErrInternal
 	}
 
-	return e.deduplicateSeries(res), nil
+	series, err := e.engine.store.Series(e.queryCtx, plan)
+	if err != nil {
+		return nil, err
+	}
+
+	return series, nil
 }
 
-func (e *Executor) deduplicateSeries(series []Series) []Series {
-	m := make(map[string]Series)
-
-	for _, s := range series {
-		key := s.Service + "|" + s.Level + "|" + s.Message
-
-		if val, ok := m[key]; ok {
-			val.Points = mergePoints(val.Points, s.Points)
-			m[key] = val
-		} else {
-			m[key] = Series{
-				Service: s.Service,
-				Level:   s.Level,
-				Message: s.Message,
-				Points:  s.Points,
-			}
-		}
-	}
-
-	var res []Series
-	for _, v := range m {
-		res = append(res, v)
-	}
-
-	return res
-}
-
-func (e *Executor) ExecuteQuery(expr Expr) ([]Series, error) {
-	series, err := e.Execute(expr)
+func (e *Executor) ExecuteQuery(plan *Plan) ([]Series, error) {
+	series, err := e.Execute(plan)
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +37,26 @@ func (e *Executor) ExecuteQuery(expr Expr) ([]Series, error) {
 		return e.evalInstant(series)
 	}
 
+	return series, nil
+}
+
+// ExecuteRangeQuery evaluates a range query at the given resolution.
+//
+// It fetches raw samples from stores once via Execute(expr), then evaluates an
+// "instant-at-step" result for each step in [StartTs, EndTs] using Lookback.
+func (e *Executor) ExecuteRangeQuery(plan *Plan, resolution int64) ([]Series, error) {
+	if resolution <= 0 || e.queryCtx.EndTs == e.queryCtx.StartTs {
+		return e.ExecuteQuery(plan)
+	}
+
+	if e.engine.store == nil {
+		return nil, ErrInternal
+	}
+
+	series, err := e.engine.store.SeriesRange(e.queryCtx, plan, resolution)
+	if err != nil {
+		return nil, err
+	}
 	return series, nil
 }
 
@@ -101,23 +93,52 @@ func (e *Executor) evalInstant(series []Series) ([]Series, error) {
 	return instantRes, nil
 }
 
-func mergePoints(a, b []Sample) []Sample {
-	res := make([]Sample, 0, len(a)+len(b))
-
-	i, j := 0, 0
-
-	for i < len(a) && j < len(b) {
-		if a[i].Timestamp <= b[j].Timestamp {
-			res = append(res, a[i])
-			i++
-		} else {
-			res = append(res, b[j])
-			j++
-		}
+// TODO: This is a naive implementation that iterates over all raw samples for each step. Need an optimization
+func EvalRangeAtResolution(series []Series, startTs, endTs, lookback, resolution int64) []Series {
+	if resolution <= 0 {
+		return series
 	}
 
-	res = append(res, a[i:]...)
-	res = append(res, b[j:]...)
+	out := make([]Series, 0, len(series))
+	for _, s := range series {
+		pts := s.Points
+		if len(pts) == 0 {
+			continue
+		}
 
-	return res
+		j := 0
+		evaluated := make([]Sample, 0, 1+((endTs-startTs)/resolution))
+
+		for t := startTs; t <= endTs; t += resolution {
+			minT := t - lookback
+			if minT < 0 {
+				minT = 0
+			}
+
+			for j < len(pts) && pts[j].Timestamp <= t {
+				j++
+			}
+			if j > 0 {
+				cand := pts[j-1]
+				if cand.Timestamp >= minT {
+					evaluated = append(evaluated, Sample{
+						Timestamp: t,
+						Count:     cand.Count,
+					})
+				}
+			}
+		}
+
+		if len(evaluated) == 0 {
+			continue
+		}
+
+		out = append(out, Series{
+			Service: s.Service,
+			Level:   s.Level,
+			Message: s.Message,
+			Points:  evaluated,
+		})
+	}
+	return out
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"maps"
-	"sort"
 	"sync"
 	"time"
 
@@ -83,71 +82,20 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 	return nil
 }
 
-func (m *MemoryStore) Series(queryCtx *logsgoql.QueryContext, expr logsgoql.Expr) ([]logsgoql.Series, error) {
-	return nil, nil
+func (m *MemoryStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
+	return tieredSeries(queryCtx, plan, 0, m.next, func() ([]logsgoql.Series, error) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.getSeries(queryCtx, plan)
+	})
 }
 
-func (m *MemoryStore) QueryInstant(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
-	var wg sync.WaitGroup
-
-	// start querying next store concurrently if exists
-	var nextRes []InstantQueryResponse
-	var nextErr error
-	if m.next != nil {
-		if localStore, ok := (*m.next).(*LocalStore); ok {
-			wg.Go(func() {
-				nextRes, nextErr = localStore.QueryInstant(cfg)
-			})
-		}
-	}
-
-	m.mu.Lock()
-	memResult, err := m.getInstantQueryResponse(cfg)
-	m.mu.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get instant query response: %w", err)
-	}
-
-	wg.Wait()
-	if nextErr != nil {
-		return nil, fmt.Errorf("failed to query next store: %w", nextErr)
-	}
-	allResults := append(memResult, nextRes...)
-
-	return deduplicateInstantResponses(allResults), nil
-}
-
-// QueryRange is Instant Query, which is done at several intervals based on the resolution
-func (m *MemoryStore) QueryRange(cfg *logsgoql.RangeQueryConfig) ([]QueryResponse, error) {
-	temp := make(map[LogKey][]Series)
-	newInstantCfg := logsgoql.NewInstantQueryConfig(0, cfg.Lookback, cfg.Filter)
-
-	for t := cfg.StartTs; t <= cfg.EndTs; t += cfg.Resolution {
-		newInstantCfg.Ts = t
-		instantResults, err := m.QueryInstant(newInstantCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query logs: %w", err)
-		}
-		for _, log := range instantResults {
-			key := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
-			temp[key] = append(temp[key], Series{
-				Timestamp: t,
-				Count:     log.Count,
-			})
-		}
-	}
-
-	results := make([]QueryResponse, 0, len(temp))
-	for key, series := range temp {
-		results = append(results, QueryResponse{
-			Level:   key.Level,
-			Service: key.Service,
-			Message: key.Message,
-			Series:  series,
-		})
-	}
-
-	return results, nil
+func (m *MemoryStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error) {
+	return tieredSeries(queryCtx, plan, resolution, m.next, func() ([]logsgoql.Series, error) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.getSeries(queryCtx, plan)
+	})
 }
 
 func (m *MemoryStore) Flush() error {
@@ -294,114 +242,69 @@ func (m *MemoryStore) LabelValues(labels *Labels) error {
 	return nil
 }
 
-func deduplicateInstantResponses(responses []InstantQueryResponse) []InstantQueryResponse {
-	deduped := make(map[string]InstantQueryResponse)
+func (m *MemoryStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
+	iterStart, iterEnd := seriesIterWindow(queryCtx)
 
-	for _, r := range responses {
-		key := r.Service + "|" + r.Level + "|" + r.Message
-		if _, exists := deduped[key]; !exists || r.TimeStamp > deduped[key].TimeStamp {
-			deduped[key] = r
-		}
-	}
+	seriesByKey := make(map[LogKey][]logsgoql.Sample)
 
-	final := make([]InstantQueryResponse, 0, len(deduped))
-	for _, v := range deduped {
-		final = append(final, v)
-	}
-
-	sort.Slice(final, func(i, j int) bool {
-		return final[i].TimeStamp < final[j].TimeStamp
+	it := m.skipList.Seek(internal.IteratorSearchOpts{
+		Start: iterStart,
+		End:   iterEnd,
 	})
 
-	return final
-}
+	for {
+		node, ok := it.Next()
+		if !ok {
+			break
+		}
 
-func (m *MemoryStore) getInstantQueryResponse(cfg *logsgoql.InstantQueryConfig) ([]InstantQueryResponse, error) {
-	var allResults []InstantQueryResponse
-	if cfg.Filter.LHS == nil && cfg.Filter.RHS == nil {
-		it := m.skipList.Seek(internal.IteratorSearchOpts{
-			Start: cfg.Ts - cfg.Lookback,
-			End:   cfg.Ts,
-		})
+		ts := node.GetKey()
+		seenThisTs := make(map[LogKey]struct{})
 
-		for {
-			node, ok := it.Next()
+		for _, v := range node.GetValues() {
+			logKey := LogKey{Service: v.Service, Level: v.Level, Message: v.Message}
+			if _, seen := seenThisTs[logKey]; seen {
+				continue
+			}
+			seenThisTs[logKey] = struct{}{}
+
+			matched, err := plan.Match(logsgoql.EntryLabels{
+				Service: v.Service,
+				Level:   v.Level,
+				Message: v.Message,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if !matched {
+				continue
+			}
+
+			logSeries, ok := m.series[logKey]
 			if !ok {
-				break
+				continue
+			}
+			entry, ok := logSeries[ts]
+			if !ok {
+				continue
 			}
 
-			ts := node.GetKey()
-			logs := node.GetValues()
-
-			for _, log := range logs {
-				if cfg.Filter.Service != "" && log.Service != cfg.Filter.Service {
-					continue
-				}
-				if cfg.Filter.Level != "" && log.Level != cfg.Filter.Level {
-					continue
-				}
-
-				logKey := LogKey{
-					Service: log.Service,
-					Level:   log.Level,
-					Message: log.Message,
-				}
-				logSeries, ok := m.series[logKey]
-				if !ok {
-					return nil, fmt.Errorf("logKey %v not found in series", logKey)
-				}
-				entry, ok := logSeries[ts]
-				if !ok {
-					return nil, fmt.Errorf("timestamp %v not found in logKey series", ts)
-				}
-
-				allResults = append(allResults, InstantQueryResponse{
-					TimeStamp: ts,
-					Service:   log.Service,
-					Level:     log.Level,
-					Message:   log.Message,
-					Count:     uint64(entry.value),
-				})
-			}
-		}
-	} else {
-		lhsResults := make([]InstantQueryResponse, 0)
-		var err error
-		if cfg.Filter.LHS != nil {
-			lhsCfg := *cfg
-			lhsCfg.Filter = *cfg.Filter.LHS
-			lhsResults, err = m.getInstantQueryResponse(&lhsCfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query LHS: %w", err)
-			}
-		}
-
-		rhsResults := make([]InstantQueryResponse, 0)
-		if cfg.Filter.RHS != nil {
-			rhsCfg := *cfg
-			rhsCfg.Filter = *cfg.Filter.RHS
-			rhsResults, err = m.getInstantQueryResponse(&rhsCfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query RHS: %w", err)
-			}
-		}
-
-		if cfg.Filter.Or {
-			allResults = append(allResults, lhsResults...)
-			allResults = append(allResults, rhsResults...)
-		} else {
-			rhsMap := make(map[string]struct{})
-			for _, r := range rhsResults {
-				key := r.Service + "|" + r.Level + "|" + r.Message
-				rhsMap[key] = struct{}{}
-			}
-			for _, r := range lhsResults {
-				key := r.Service + "|" + r.Level + "|" + r.Message
-				if _, ok := rhsMap[key]; ok {
-					allResults = append(allResults, r)
-				}
-			}
+			seriesByKey[logKey] = append(seriesByKey[logKey], logsgoql.Sample{
+				Timestamp: ts,
+				Count:     uint64(entry.value),
+			})
 		}
 	}
-	return allResults, nil
+
+	results := make([]logsgoql.Series, 0, len(seriesByKey))
+	for k, pts := range seriesByKey {
+		results = append(results, logsgoql.Series{
+			Service: k.Service,
+			Level:   k.Level,
+			Message: k.Message,
+			Points:  pts,
+		})
+	}
+
+	return results, nil
 }
