@@ -2,6 +2,7 @@ package ingestion
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"path/filepath"
@@ -153,16 +154,22 @@ func (s *LogIngestorServer) UploadLogs(ctx context.Context, req *logapi.LogBatch
 	return &logapi.UploadResponse{Success: true}, nil
 }
 
-func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]store.QueryResponse, error) {
+func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]logsgoql.Series, error) {
 	s.cfg.QueryTime = time.Now().Unix()
 
-	parse, err := logsgoql.ParseQuery(req.Query)
-	if err != nil {
-		log.Printf("failed to parse query: %v", err)
-		return nil, err
+	lexer := logsgoql.NewLexer(req.Query)
+	parser := logsgoql.NewParser(lexer)
+	expr := parser.ParseExpression()
+	if len(parser.Errors()) > 0 {
+		log.Printf("failed to parse query: %v", parser.Errors())
+		return nil, fmt.Errorf("failed to parse query: %v", parser.Errors())
 	}
-
-	var logs []store.QueryResponse
+	plan, err := logsgoql.BuildPlan(expr)
+	if err != nil {
+		log.Printf("failed to build query plan: %v", err)
+		return nil, fmt.Errorf("failed to build query plan: %v", err)
+	}
+	var series []logsgoql.Series
 
 	if req.StartTs == req.EndTs {
 		// instant i.e. query for a specific time
@@ -172,45 +179,36 @@ func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]store.QueryResponse, 
 			s.cfg.QueryTime = time.Now().Unix()
 		}
 
-		instantConfig := logsgoql.NewInstantQueryConfig(s.cfg.QueryTime, s.cfg.LookbackPeriod, parse)
-		instantLogs, err := s.Store.QueryInstant(instantConfig)
+		queryCtx := logsgoql.QueryContext{
+			StartTs:  s.cfg.QueryTime,
+			EndTs:    s.cfg.QueryTime,
+			Lookback: s.cfg.LookbackPeriod,
+		}
+		executor := logsgoql.NewExecutor(logsgoql.NewEngine(s.Store), queryCtx)
+		series, err = executor.ExecuteQuery(plan)
 		if err != nil {
 			log.Printf("failed to query logs: %v", err)
 			return nil, err
 		}
 
-		logs = changeToQueryResponse(instantLogs)
 	} else {
-		rangeConfig := logsgoql.NewRangeQueryConfig(req.StartTs, req.EndTs, s.cfg.LookbackPeriod, req.Resolution, parse)
-		logs, err = s.Store.QueryRange(rangeConfig)
+		queryCtx := logsgoql.QueryContext{
+			StartTs:  req.StartTs,
+			EndTs:    req.EndTs,
+			Lookback: s.cfg.LookbackPeriod,
+		}
+		executor := logsgoql.NewExecutor(logsgoql.NewEngine(s.Store), queryCtx)
+
+		series, err = executor.ExecuteRangeQuery(plan, req.Resolution)
 		if err != nil {
 			log.Printf("failed to query logs: %v", err)
 			return nil, err
 		}
 	}
 
-	return logs, nil
+	return series, nil
 }
 
 func (s *LogIngestorServer) IsReady() bool {
 	return s.Store != nil
-}
-
-func changeToQueryResponse(logs []store.InstantQueryResponse) []store.QueryResponse {
-	queryResp := make([]store.QueryResponse, len(logs))
-	for i, log := range logs {
-		queryResp[i] = store.QueryResponse{
-			Level:   log.Level,
-			Service: log.Service,
-			Message: log.Message,
-			Series: []store.Series{
-				{
-					Timestamp: log.TimeStamp,
-					Count:     log.Count,
-				},
-			},
-		}
-	}
-
-	return queryResp
 }

@@ -2,10 +2,10 @@ export interface LogsPayload {
     Service: string;
     Level: string;
     Message: string;
-    Series: Series[];
+    Points: Points[];
 }
 
-type Series = {
+type Points = {
     Count: number;
     Timestamp: string;
 };

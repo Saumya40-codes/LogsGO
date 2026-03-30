@@ -45,7 +45,7 @@ jobs:
             Title: ${{ github.event.issue.title || github.event.pull_request.title }}
             Body: ${{ github.event.issue.body || github.event.pull_request.body }}
 
-      - name: Comment with structured summary (safe)
+      - name: Comment with structured summary
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RESPONSE: ${{ steps.inference.outputs.response }}
