@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      pull-requests: write
       models: read
       contents: read
 
@@ -18,24 +19,51 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Run AI inference
+      - name: Run AI inference (structured summary)
         id: inference
         uses: actions/ai-inference@v2
         with:
           prompt: |
-            Summarize the following GitHub issue in one paragraph:
-            Title: ${{ github.event.issue.title }}
-            Body: ${{ github.event.issue.body }}
+            Analyze the following GitHub item and generate a structured summary.
 
-      - name: Comment with AI summary
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            gh pr comment "$PR_NUMBER" --body "$RESPONSE"
-          else
-            gh issue comment "$ISSUE_NUMBER" --body "$RESPONSE"
-          fi
+            Return the result in Markdown with these sections:
+
+            ### 🧾 Summary
+            (2-3 sentence overview)
+
+            ### 🔍 Key Points
+            - Bullet points of the main details
+
+            ### ⚠️ Severity
+            Choose one: Low / Medium / High / Critical
+            (based on impact and urgency)
+
+            ### 🌍 Impact
+            Describe who/what is affected (users, system, feature, etc.)
+
+            --- 
+
+            Title: ${{ github.event.issue.title || github.event.pull_request.title }}
+            Body: ${{ github.event.issue.body || github.event.pull_request.body }}
+
+      - name: Comment with structured summary
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESPONSE: ${{ steps.inference.outputs.response }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-          RESPONSE: ${{ steps.inference.outputs.response }}
+        run: |
+          if [ -z "$RESPONSE" ]; then
+            echo "No response generated"
+            exit 1
+          fi
+
+          COMMENT_BODY="🤖 **AI Review Summary**
+
+          $RESPONSE"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY"
+          else
+            gh issue comment "$ISSUE_NUMBER" --body "$COMMENT_BODY"
+          fi
