@@ -1,4 +1,4 @@
-name: Summarize new issues
+name: Summarize
 
 on:
   issues:
@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      pull-requests: write
       models: read
       contents: read
 
@@ -23,19 +24,25 @@ jobs:
         uses: actions/ai-inference@v2
         with:
           prompt: |
-            Summarize the following GitHub issue in one paragraph:
-            Title: ${{ github.event.issue.title }}
-            Body: ${{ github.event.issue.body }}
+            Summarize the following GitHub item in one paragraph:
+
+            Title: ${{ github.event.issue.title || github.event.pull_request.title }}
+            Body: ${{ github.event.issue.body || github.event.pull_request.body }}
 
       - name: Comment with AI summary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESPONSE: ${{ steps.inference.outputs.response }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
+          if [ -z "$RESPONSE" ]; then
+            echo "No response generated"
+            exit 1
+          fi
+
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             gh pr comment "$PR_NUMBER" --body "$RESPONSE"
           else
             gh issue comment "$ISSUE_NUMBER" --body "$RESPONSE"
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          RESPONSE: ${{ steps.inference.outputs.response }}
