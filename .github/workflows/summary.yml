@@ -36,17 +36,16 @@ jobs:
 
             ### ⚠️ Severity
             Choose one: Low / Medium / High / Critical
-            (based on impact and urgency)
 
             ### 🌍 Impact
-            Describe who/what is affected (users, system, feature, etc.)
+            Describe who/what is affected
 
-            --- 
+            ---
 
             Title: ${{ github.event.issue.title || github.event.pull_request.title }}
             Body: ${{ github.event.issue.body || github.event.pull_request.body }}
 
-      - name: Comment with structured summary
+      - name: Comment with structured summary (safe)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RESPONSE: ${{ steps.inference.outputs.response }}
@@ -54,8 +53,8 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           if [ -z "$RESPONSE" ]; then
-            echo "No response generated"
-            exit 1
+            echo "No response generated — skipping"
+            exit 0
           fi
 
           COMMENT_BODY="🤖 **AI Review Summary**
@@ -63,7 +62,13 @@ jobs:
           $RESPONSE"
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY"
+            # Skip forked PRs (no permission to comment)
+            if [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
+              echo "Skipping comment: PR is from fork"
+              exit 0
+            fi
+
+            gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY" || echo "Failed to comment on PR (ignored)"
           else
-            gh issue comment "$ISSUE_NUMBER" --body "$COMMENT_BODY"
+            gh issue comment "$ISSUE_NUMBER" --body "$COMMENT_BODY" || echo "Failed to comment on issue (ignored)"
           fi
