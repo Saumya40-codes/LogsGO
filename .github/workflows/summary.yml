@@ -1,4 +1,4 @@
-name: Summarize
+name: Summarize new issues
 
 on:
   issues:
@@ -19,17 +19,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Run AI inference
+      - name: Run AI inference (structured summary)
         id: inference
         uses: actions/ai-inference@v2
         with:
           prompt: |
-            Summarize the following GitHub item in one paragraph:
+            Analyze the following GitHub item and generate a structured summary.
+
+            Return the result in Markdown with these sections:
+
+            ### 🧾 Summary
+            (2-3 sentence overview)
+
+            ### 🔍 Key Points
+            - Bullet points of the main details
+
+            ### ⚠️ Severity
+            Choose one: Low / Medium / High / Critical
+            (based on impact and urgency)
+
+            ### 🌍 Impact
+            Describe who/what is affected (users, system, feature, etc.)
+
+            --- 
 
             Title: ${{ github.event.issue.title || github.event.pull_request.title }}
             Body: ${{ github.event.issue.body || github.event.pull_request.body }}
 
-      - name: Comment with AI summary
+      - name: Comment with structured summary
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RESPONSE: ${{ steps.inference.outputs.response }}
@@ -41,8 +58,12 @@ jobs:
             exit 1
           fi
 
+          COMMENT_BODY="🤖 **AI Review Summary**
+
+          $RESPONSE"
+
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            gh pr comment "$PR_NUMBER" --body "$RESPONSE"
+            gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY"
           else
-            gh issue comment "$ISSUE_NUMBER" --body "$RESPONSE"
+            gh issue comment "$ISSUE_NUMBER" --body "$COMMENT_BODY"
           fi
