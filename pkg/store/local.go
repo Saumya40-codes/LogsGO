@@ -393,6 +393,7 @@ func (l *LocalStore) LabelValues(labels *Labels) error {
 	if err != nil || file == nil {
 		return fmt.Errorf("failed to open meta.json file: %w", os.ErrNotExist)
 	}
+	defer file.Close()
 
 	err = parseLabelsFromFile(file, &metaLabels)
 	if err != nil {
