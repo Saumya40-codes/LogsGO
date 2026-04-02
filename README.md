@@ -76,9 +76,14 @@
 ![Data Model](docs/data_model.png)
 
 ---
-## Query Execution Overview
+## Query Execution Plan Overview
 
 ![Querying Execution](docs/query-execution.png)
+
+Engine creates a query execution plan which later, gets executed by each store concurrently
+![Querying Flow](docs/query-flow.png)
+
+Each parent store and child store (curr and curr.next) does deduplication with parent series having preference, if somehow same series exists at same timestamp in both stores. Therefore 2 deduplication happens in total (local <-> bucket  => memory <-> (local+bucket))
 
 ## Current State
 ![LogsGo Current State](docs/v0.2.0-instant-query.png)
