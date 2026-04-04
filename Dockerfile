@@ -9,4 +9,3 @@ FROM alpine:3.22 AS final
 WORKDIR /app
 COPY --from=builder /app/logsGo .
 ENTRYPOINT ["./logsGo"]
-CMD ["--help"]
