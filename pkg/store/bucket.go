@@ -214,11 +214,11 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 		if !ok {
 			return fmt.Errorf("timestamp %v not found in logKey series", log.Timestamp)
 		}
-		series := &logapi.Series{
+		s := &logapi.Series{
 			Entry: log,
 			Count: uint64(entry.value),
 		}
-		batches.Entries = append(batches.Entries, series)
+		batches.Entries = append(batches.Entries, s)
 	}
 
 	// Update metadata
@@ -729,6 +729,8 @@ func (b *BucketStore) loadSeriesFromBlock(objectKey string) ([]*logapi.Series, e
 }
 
 func (b *BucketStore) GetMetaData() (*Labels, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.metrics.BucketCalls.Inc()
 	labels := &Labels{
 		Services: make(map[string]int),
