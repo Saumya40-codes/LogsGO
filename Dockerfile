@@ -5,7 +5,7 @@ RUN go mod download
 COPY . .
 RUN go build -o logsGo ./cmd/logsGo
 
-FROM alpine:3.22 AS final
+FROM alpine:3.23 AS final
 WORKDIR /app
 COPY --from=builder /app/logsGo .
 ENTRYPOINT ["./logsGo"]
