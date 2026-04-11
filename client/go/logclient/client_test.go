@@ -37,6 +37,11 @@ var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush m
 	CompactDuration:  "12h", // duration after which compact cycles are run
 }
 
+func GetNewDefaultFactory() *pkg.IngestionFactory {
+	f := factory
+	return &f
+}
+
 // override auth config for tests if needed
 var authConfig = auth.AuthConfig{
 	PublicKeyPath: "",
@@ -97,7 +102,7 @@ func verifyLogs(t *testing.T, url string, expected []expectedLog) {
 func TestGRPCConn(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
 
 	// waiting for server to start
@@ -119,9 +124,9 @@ func TestGRPCConn(t *testing.T) {
 func TestDirCreated(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -160,9 +165,9 @@ func checkDirExists(t *testing.T, path string) {
 func TestLabelValues(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -226,9 +231,9 @@ func AssertLabels(t *testing.T, labels rest.LabelValuesResponse, expectedService
 func TestQueryOutput(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
 
 	opts := &LogOpts{
 		Message: "Time duration execeeded",
@@ -294,9 +299,9 @@ func TestLogDataUploadToS3(t *testing.T) {
 	factory.StoreConfig = string(bktConfig)
 
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -373,9 +378,9 @@ func TestLogDataUploadToS3(t *testing.T) {
 func TestRangeQueries(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
 
 	time.Sleep(2 * time.Second) // wait for servers
 	startTs := time.Now()
@@ -442,9 +447,9 @@ func TestRangeQueries(t *testing.T) {
 func TestUploadsBatch(t *testing.T) {
 	factory.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
 
 	time.Sleep(2 * time.Second) // wait for servers
 
@@ -525,9 +530,9 @@ func TestCompaction(t *testing.T) {
 	factory.StoreConfig = string(bktConfig)
 
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -629,9 +634,9 @@ func TestCompactionIndex(t *testing.T) {
 	factory.StoreConfig = string(bktConfig)
 
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, &factory, metricsObj)
+	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
 	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, &factory, authConfig, reg)
+	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
 
 	// wait for servers
 	time.Sleep(2 * time.Second)
@@ -643,7 +648,7 @@ func TestCompactionIndex(t *testing.T) {
 	testutil.Ok(t, lc.UploadLog(ctx, opts))
 
 	// give time for flush + compaction to run
-	time.Sleep(25 * time.Second)
+	time.Sleep(35 * time.Second)
 
 	// create a minio client to fetch the index file directly
 	mc, err := minio.New(m1.Endpoint("http"), &minio.Options{

@@ -19,9 +19,9 @@ import (
 // MemoryStore implements the Store interface using an in-memory map.
 type MemoryStore struct {
 	mu              sync.Mutex
+	stopOnce        sync.Once
 	next            *Store        // Next store in the chain, if any
 	maxTimeInMemory time.Duration // Maximum time in memory, after which logs are flushed to the next store
-	lastFlushTime   int64         // Timestamp of the last flush operation
 	shutdown        chan struct{} // Channel to signal shutdown of the store
 	flushOnExit     bool
 	skipList        *internal.SkipList
@@ -36,7 +36,6 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index
 		mu:              sync.Mutex{},
 		next:            next,
 		maxTimeInMemory: pkg.GetTimeDuration(maxTimeInMemory),
-		lastFlushTime:   0,
 		shutdown:        make(chan struct{}),
 		flushOnExit:     flushOnExit,
 		series:          make(map[LogKey]map[int64]CounterValue),
@@ -100,8 +99,14 @@ func (m *MemoryStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql
 
 func (m *MemoryStore) Flush() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			m.mu.Unlock()
+		}
+	}()
 	var logsToBeFlushed []*logapi.LogEntry
+	seriesToFlush := make(map[LogKey]map[int64]CounterValue)
 	currT := time.Now().Unix()
 	maxThreshold := currT - int64(m.maxTimeInMemory.Seconds())
 
@@ -113,39 +118,47 @@ func (m *MemoryStore) Flush() error {
 	}
 
 	iter := m.skipList.Seek(internal.IteratorSearchOpts{
-		Start: m.lastFlushTime + 1,
+		Start: 0,
 		End:   maxThreshold,
 	})
 
-	if m.next != nil {
-		if localStore, ok := (*m.next).(*LocalStore); ok {
-			for {
-				node, ok := iter.Next()
-				if !ok {
-					break
-				}
-				ts := node.GetKey()
-				logs := node.GetValues()
-
-				for _, log := range logs {
-					logsToBeFlushed = append(logsToBeFlushed, &logapi.LogEntry{
-						Service:   log.Service,
-						Level:     log.Level,
-						Message:   log.Message,
-						Timestamp: ts,
-					})
-				}
-				m.skipList.Delete(ts)
-			}
-			if err := localStore.Insert(logsToBeFlushed, m.series); err != nil {
-				return fmt.Errorf("failed to insert logs into next store: %w", err)
-			}
-		} else {
-			log.Println("next store is not a LocalStore, cannot insert logs")
-			return nil
+	for {
+		node, ok := iter.Next()
+		if !ok {
+			break
 		}
+		ts := node.GetKey()
+		logs := node.GetValues()
+
+		for _, log := range logs {
+			entry := &logapi.LogEntry{
+				Service:   log.Service,
+				Level:     log.Level,
+				Message:   log.Message,
+				Timestamp: ts,
+			}
+			logsToBeFlushed = append(logsToBeFlushed, entry)
+
+			logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
+			logSeries, ok := m.series[logKey]
+			if !ok {
+				m.mu.Unlock()
+				return fmt.Errorf("logKey %v not found in series", logKey)
+			}
+			counterVal, ok := logSeries[ts]
+			if !ok {
+				m.mu.Unlock()
+				return fmt.Errorf("timestamp %v not found in series for logKey %v", ts, logKey)
+			}
+			if seriesToFlush[logKey] == nil {
+				seriesToFlush[logKey] = make(map[int64]CounterValue)
+			}
+			seriesToFlush[logKey][ts] = counterVal
+		}
+		m.skipList.Delete(ts)
 	}
 
+	var localStore *LocalStore
 	for _, log := range logsToBeFlushed {
 		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
 		if _, ok := m.series[logKey]; ok {
@@ -174,11 +187,32 @@ func (m *MemoryStore) Flush() error {
 			}
 		}
 	}
+	m.mu.Unlock()
+	locked = false
+
+	if m.next != nil {
+		if nextStore, ok := (*m.next).(*LocalStore); ok {
+			localStore = nextStore
+		} else {
+			log.Println("next store is not a LocalStore, cannot insert logs")
+			return nil
+		}
+	}
+
+	if localStore != nil {
+		if err := localStore.Insert(logsToBeFlushed, seriesToFlush); err != nil {
+			return fmt.Errorf("failed to insert logs into next store: %w", err)
+		}
+	}
 
 	return nil
 }
 
 func (m *MemoryStore) Close() error {
+	m.stopOnce.Do(func() {
+		close(m.shutdown)
+	})
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -204,19 +238,17 @@ func (m *MemoryStore) Close() error {
 }
 
 func (m *MemoryStore) startFlushTimer() {
-	for {
-		time.Sleep(2 * time.Second) // Sleep for 2 seconds before checking the flush condition to prevent tight loop
-		select {
-		case <-time.After(m.maxTimeInMemory):
-			// Start Flushing, what to flush should be decided by another function
-			m.Flush()
-			m.lastFlushTime = time.Now().Unix()
+	ticker := time.NewTicker(m.maxTimeInMemory)
+	defer ticker.Stop()
 
+	for {
+		select {
+		case <-ticker.C:
+			m.Flush()
 		case <-m.shutdown:
 			if m.flushOnExit {
 				m.Flush()
 			}
-			m.Close()
 			return
 		}
 	}

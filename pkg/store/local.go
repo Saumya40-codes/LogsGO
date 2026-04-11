@@ -26,6 +26,7 @@ import (
 type LocalStore struct {
 	db            *pkg.DB
 	mu            sync.Mutex
+	stopOnce      sync.Once
 	maxTimeInDisk time.Duration // Maximum time in disk, after which logs are flushed to the next store
 	// lastFlushTime int64 // Timestamp of the last flush operation
 	next          *Store // Next store in the chain, if any
@@ -47,6 +48,7 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 		db:            db,
 		mu:            sync.Mutex{},
 		next:          next,
+		shutdown:      make(chan struct{}),
 		maxTimeInDisk: pkg.GetTimeDuration(maxTimeInDisk),
 		flushOnExit:   flushOnExit,
 		lastFlushTime: 0,
@@ -91,6 +93,9 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 		return fmt.Errorf("failed to parse meta labels: %w", err)
 	}
 
+	batch := l.db.Conn.NewWriteBatch()
+	defer batch.Cancel()
+
 	for _, log := range logs {
 		// we store this way for efficient lookups, for querying we should convert back to series object
 		key := fmt.Sprintf("%s|%s|%s|%d", log.Level, log.Service, EncodeMessage(log.Message), log.Timestamp)
@@ -106,12 +111,16 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 		}
 
 		valueStr := strconv.FormatUint(entry.value, 10)
-		if err := l.db.Save(key, []byte(valueStr)); err != nil {
+		if err := batch.Set([]byte(key), []byte(valueStr)); err != nil {
 			return fmt.Errorf("failed to save  log to DB: %w", err)
 		}
 
 		metaLabels.Services[log.Service]++
 		metaLabels.Levels[log.Level]++
+	}
+
+	if err := batch.Flush(); err != nil {
+		return fmt.Errorf("failed to flush local insert batch: %w", err)
 	}
 
 	l.metrics.LogsIngested.WithLabelValues("local").Add(float64(len(logs)))
@@ -258,6 +267,10 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 func (l *LocalStore) Flush() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	if l.db == nil || l.db.Conn == nil || l.db.Conn.IsClosed() {
+		return nil
+	}
 	timer := prometheus.NewTimer(l.metrics.FlushDuration.WithLabelValues("local", "bucket"))
 	defer timer.ObserveDuration()
 
@@ -374,10 +387,14 @@ func (l *LocalStore) Flush() error {
 }
 
 func (l *LocalStore) Close() error {
+	l.stopOnce.Do(func() {
+		close(l.shutdown)
+	})
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.db != nil {
+	if l.db != nil && l.db.Conn != nil && !l.db.Conn.IsClosed() {
 		l.db.CloseDB()
 	}
 	return nil
@@ -424,18 +441,18 @@ func (l *LocalStore) LabelValues(labels *Labels) error {
 }
 
 func (l *LocalStore) startFlushTimer() {
+	ticker := time.NewTicker(l.maxTimeInDisk)
+	defer ticker.Stop()
+
 	for {
-		time.Sleep(2 * time.Second) // Sleep for 2 seconds before checking the flush condition to prevent tight loop
 		select {
-		case <-time.After(l.maxTimeInDisk):
-			// Start Flushing, what to flush should be decided by another function
+		case <-ticker.C:
 			l.Flush()
 			l.lastFlushTime = time.Now().Unix()
 		case <-l.shutdown:
 			if l.flushOnExit {
 				l.Flush()
 			}
-			l.Close()
 			return
 		}
 	}
