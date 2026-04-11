@@ -97,8 +97,7 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 	defer batch.Cancel()
 
 	for _, log := range logs {
-		// we store this way for efficient lookups, for querying we should convert back to series object
-		key := fmt.Sprintf("%s|%s|%s|%d", log.Level, log.Service, EncodeMessage(log.Message), log.Timestamp)
+		key := buildLocalStoreKey(log.Timestamp, log.Level, log.Service, log.Message)
 		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
 		logSeries, ok := series[logKey]
 		if !ok {
@@ -158,78 +157,28 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 	defer txn.Discard()
 
 	opts := badger.DefaultIteratorOptions
-	levelSet, levelOK := requiredEqSet(plan.Root, logsgoql.FieldLevel)
-	if levelOK && len(levelSet) == 0 {
-		return nil, nil
-	}
-	serviceSet, serviceOK := requiredEqSet(plan.Root, logsgoql.FieldService)
-	if serviceOK && len(serviceSet) == 0 {
-		return nil, nil
-	}
-
-	prefix := ""
-	if levelOK && len(levelSet) == 1 {
-		// prefix scan is possible
-		for lvl := range levelSet {
-			prefix = lvl + "|"
-		}
-		if serviceOK && len(serviceSet) == 1 {
-			for svc := range serviceSet {
-				prefix = prefix + svc + "|"
-			}
-		}
-		opts.Prefix = []byte(prefix)
-		opts.PrefetchValues = true
-	} else {
-		opts.PrefetchValues = false
-	}
+	opts.PrefetchValues = true
 	it := txn.NewIterator(opts)
 	defer it.Close()
 
-	usesMessage := planUsesField(plan.Root, logsgoql.FieldMessage)
-
-	for it.Rewind(); it.Valid(); it.Next() {
+	for it.Seek([]byte(localStoreSeekKey(iterStart))); it.Valid(); it.Next() {
 		item := it.Item()
 		k := string(item.Key())
 
-		tokens := strings.Split(k, "|")
-		if len(tokens) < 4 {
+		ts, level, service, message, ok := parseLocalStoreKey(k)
+		if !ok {
 			continue
 		}
-		level, service := tokens[0], tokens[1]
-		encodedMessage := tokens[2]
-		ts, err := strconv.ParseInt(tokens[3], 10, 64)
-		if err != nil {
-			continue
-		}
-		if ts < iterStart || ts > iterEnd {
-			continue
+		if ts > iterEnd {
+			break
 		}
 
-		messageForMatch := ""
-		if usesMessage {
-			msg, err := DecodeMessage(encodedMessage)
-			if err != nil {
-				continue
-			}
-			messageForMatch = msg
-		}
-
-		matched, err := plan.Match(logsgoql.EntryLabels{Service: service, Level: level, Message: messageForMatch})
+		matched, err := plan.Match(logsgoql.EntryLabels{Service: service, Level: level, Message: message})
 		if err != nil {
 			return nil, err
 		}
 		if !matched {
 			continue
-		}
-
-		message := messageForMatch
-		if !usesMessage {
-			msg, err := DecodeMessage(encodedMessage)
-			if err != nil {
-				continue
-			}
-			message = msg
 		}
 
 		valCopy, err := item.ValueCopy(nil)
@@ -300,22 +249,12 @@ func (l *LocalStore) Flush() error {
 	batch := l.db.Conn.NewWriteBatch()
 	defer batch.Cancel()
 
-	for it.Rewind(); it.Valid(); it.Next() {
+	for it.Seek([]byte(localStoreSeekKey(0))); it.Valid(); it.Next() {
 		item := it.Item()
 		k := string(item.Key())
 
-		tokens := strings.Split(k, "|")
-		if len(tokens) < 4 {
-			continue
-		}
-
-		level, service := tokens[0], tokens[1]
-		message, err := DecodeMessage(tokens[2])
-		if err != nil {
-			continue
-		}
-		timestamp, err := strconv.ParseInt(tokens[3], 10, 64)
-		if err != nil {
+		timestamp, level, service, message, ok := parseLocalStoreKey(k)
+		if !ok {
 			continue
 		}
 
@@ -526,6 +465,33 @@ func writeLabelsToFile(file *os.File, labels Labels, dir string) error {
 	}
 
 	return nil
+}
+
+func buildLocalStoreKey(timestamp int64, level, service, message string) string {
+	return fmt.Sprintf("%020d|%s|%s|%s", timestamp, level, service, EncodeMessage(message))
+}
+
+func localStoreSeekKey(timestamp int64) string {
+	return fmt.Sprintf("%020d|", timestamp)
+}
+
+func parseLocalStoreKey(key string) (timestamp int64, level, service, message string, ok bool) {
+	parts := strings.SplitN(key, "|", 4)
+	if len(parts) != 4 {
+		return 0, "", "", "", false
+	}
+
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, "", "", "", false
+	}
+
+	msg, err := DecodeMessage(parts[3])
+	if err != nil {
+		return 0, "", "", "", false
+	}
+
+	return ts, parts[1], parts[2], msg, true
 }
 
 // Insert -> key -> fmt.Sprintf("%d|%s|%s", entry.Timestamp, entry.Level, entry.Service) TODO think about how to parse message efficiently

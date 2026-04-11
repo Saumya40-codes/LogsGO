@@ -3,8 +3,6 @@ name: Summarize new issues
 on:
   issues:
     types: [opened]
-  pull_request:
-    types: [opened]
 
 jobs:
   summary:
