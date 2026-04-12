@@ -93,6 +93,10 @@ The output you see is an instant query, many of the logs you see were first uplo
 
 ![LogsGo Query Range State](docs/v0.2.0-range-query.png)
 
+Graph view:
+![LogsGo Query Range Graph View](docs/range-query-graph-view.png)
+
+
 This starts from start timestamp and moves by 'resolution' amount till end timestamp, the count is the number of logs found in that range, currently if no logs are found in that range, the value at that timestamp isn't shown.
 
 
