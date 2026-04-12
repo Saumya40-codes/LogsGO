@@ -7,7 +7,7 @@ export interface LogsPayload {
 
 type Points = {
     Count: number;
-    Timestamp: string;
+    Timestamp: number;
 };
 
 export interface LabelValuesProps {

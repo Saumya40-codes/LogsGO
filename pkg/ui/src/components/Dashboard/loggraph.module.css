@@ -1,0 +1,99 @@
+.graphCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.graphHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.seriesList {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.seriesCard {
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.seriesHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.seriesTitle {
+  line-height: 1.25;
+}
+
+.seriesMessage {
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.pointsList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pointRow {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.pointMeta {
+  min-width: 0;
+}
+
+.pointCount {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.barTrack {
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.85);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f59e0b, #d97706);
+  min-width: 8px;
+}
+
+.emptyState {
+  min-height: 150px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.4);
+  background: rgba(248, 250, 252, 0.8);
+}
+
+@media (max-width: 640px) {
+  .pointRow {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}

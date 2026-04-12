@@ -1,9 +1,10 @@
-import { Input, Text, Box, Button, TextInput, Tooltip, Center } from "@mantine/core";
+import { Input, Text, Box, Button, TextInput, Tooltip, Center, Tabs } from "@mantine/core";
 import { DateTimePicker } from '@mantine/dates';
 import styles from "./expressionInput.module.css";
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { LogsPayload } from "../../types/types";
 import LogData from "./LogData";
+import LogGraph from "./LogGraph";
 import SuggestionFilter from "./SuggestionFilter";
 import { IconInfoCircle } from '@tabler/icons-react';
 
@@ -14,6 +15,14 @@ const ExpressionInput = () => {
     const [startTs, setStartTs] = useState<number>(0);
     const [endTs, setEndTs] = useState<number>(0);
     const [resolution, setResolution] = useState<string>("15m");
+    const [activeTab, setActiveTab] = useState<string>("series");
+    const hasTimeRange = startTs !== 0 && endTs !== 0;
+
+    useEffect(() => {
+        if (!hasTimeRange && activeTab === "graph") {
+            setActiveTab("series");
+        }
+    }, [hasTimeRange, activeTab]);
 
     const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const value = event.target.value;
@@ -151,7 +160,22 @@ const ExpressionInput = () => {
 
             </div>
             <div className={styles.logsContainer}>
-                <LogData logs={logs} />
+                <Tabs value={activeTab} onChange={(value) => setActiveTab(value || "series")}>
+                    <Tabs.List>
+                        <Tabs.Tab value="series">Series</Tabs.Tab>
+                        {hasTimeRange && <Tabs.Tab value="graph">Graph</Tabs.Tab>}
+                    </Tabs.List>
+
+                    <Tabs.Panel value="series" pt="md">
+                        <LogData logs={logs} />
+                    </Tabs.Panel>
+
+                    {hasTimeRange && (
+                        <Tabs.Panel value="graph" pt="md">
+                            <LogGraph logs={logs} startTs={startTs} endTs={endTs} />
+                        </Tabs.Panel>
+                    )}
+                </Tabs>
             </div>
         </Box>
     );

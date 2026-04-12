@@ -25,19 +25,21 @@ const LogData = ({ logs }: { logs: LogsPayload[] }) => {
     ));
 
     return (
-        <ScrollArea onScrollPositionChange={({ y }) => setScrolled(y !== 0)} className={styles.scrollarea}>
-            <Table miw={700}>
-                <Table.Thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
-                <Table.Tr>
-                    <Table.Th>Service</Table.Th>
-                    <Table.Th>Level</Table.Th>
-                    <Table.Th>Message</Table.Th>
-                    <Table.Th>Occurrence(s): TimeStamp(s)</Table.Th>
-                </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>{rows}</Table.Tbody>
-            </Table>
-        </ScrollArea>
+        <div className={styles.container}>
+            <ScrollArea onScrollPositionChange={({ y }) => setScrolled(y !== 0)} className={styles.scrollarea}>
+                <Table miw={700}>
+                    <Table.Thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
+                    <Table.Tr>
+                        <Table.Th>Service</Table.Th>
+                        <Table.Th>Level</Table.Th>
+                        <Table.Th>Message</Table.Th>
+                        <Table.Th>Occurrence(s): TimeStamp(s)</Table.Th>
+                    </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>{rows}</Table.Tbody>
+                </Table>
+            </ScrollArea>
+        </div>
     );
 }
 

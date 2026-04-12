@@ -1,3 +1,9 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
 .scrollarea {
     overflow: auto;
     height: 100%;
