@@ -113,7 +113,7 @@ func main() {
 	rootCmd.Flags().BoolVar(&cfg.FlushOnExit, "flush-on-exit", false, "If set on exit under any condition, logs will be flushed to its next store, if you want complete persistance")
 	rootCmd.Flags().StringVar(&cfg.StoreConfigPath, "store-config-path", "", "Path to your s3 compatible store config path, if any")
 	rootCmd.Flags().StringVar(&cfg.StoreConfig, "store-config", "", "s3 compatible store configuration, can't be used with --store-config-path flag")
-	rootCmd.Flags().StringVar(&cfg.WebListenAddr, "web-listen-addr", "http://localhost:19091", "LogsGo web client address")
+	rootCmd.Flags().StringVar(&cfg.WebListenAddr, "web-listen-addr", ":19091", "LogsGo web client address")
 	rootCmd.Flags().StringVar(&cfg.LookbackPeriod, "lookback-period", "15m", "For instant queries (querying at current time) how much to look back in time from current time to fetch logs")
 
 	// validate auth paths file during init time only

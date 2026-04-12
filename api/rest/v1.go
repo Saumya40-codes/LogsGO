@@ -3,7 +3,9 @@ package rest
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -33,25 +35,28 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 
 	var origin string
 	if !strings.HasPrefix(cfg.WebListenAddr, "http://") && !strings.HasPrefix(cfg.WebListenAddr, "https://") {
-		addr := strings.Split(cfg.WebListenAddr, ":")
-		var host, port string
-		if len(addr) == 2 {
-			host = addr[0]
-			port = addr[1]
-		} else if len(addr) == 1 {
-			host = addr[0]
-			port = "80"
-		} else {
-			log.Printf("unexpected WebListenAddr format: %s", cfg.WebListenAddr)
+		host, port, err := net.SplitHostPort(cfg.WebListenAddr)
+		if err != nil {
+			if strings.HasPrefix(cfg.WebListenAddr, ":") {
+				host = "localhost"
+				port = strings.TrimPrefix(cfg.WebListenAddr, ":")
+			} else {
+				host = cfg.WebListenAddr
+				port = "80"
+			}
 		}
 
-		if host == "0.0.0.0" || host == "" {
+		if host == "" || host == "0.0.0.0" {
 			host = "localhost"
 		}
 
-		origin = "http://" + host + ":" + port
+		origin = "http://" + net.JoinHostPort(host, port)
 	} else {
-		origin = cfg.WebListenAddr
+		u, err := url.Parse(cfg.WebListenAddr)
+		if err != nil {
+			log.Printf("invalid URL: %s", cfg.WebListenAddr)
+		}
+		origin = u.String()
 	}
 	allowedOrigins = append(allowedOrigins, origin)
 
