@@ -100,10 +100,11 @@ func verifyLogs(t *testing.T, url string, expected []expectedLog) {
 }
 
 func TestGRPCConn(t *testing.T) {
-	factory.DataDir = t.TempDir()
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -114,7 +115,7 @@ func TestGRPCConn(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	err = lc.UploadLog(ctx, opts)
@@ -122,11 +123,12 @@ func TestGRPCConn(t *testing.T) {
 }
 
 func TestDirCreated(t *testing.T) {
-	factory.DataDir = t.TempDir()
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -137,14 +139,14 @@ func TestDirCreated(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	err = lc.UploadLog(ctx, opts)
 	testutil.Ok(t, err)
 
 	// we should have 'atleast' something in data/
-	checkDirExists(t, factory.DataDir)
+	checkDirExists(t, fctry.DataDir)
 }
 
 func checkDirExists(t *testing.T, path string) {
@@ -163,11 +165,12 @@ func checkDirExists(t *testing.T, path string) {
 }
 
 func TestLabelValues(t *testing.T) {
-	factory.DataDir = t.TempDir()
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -178,7 +181,7 @@ func TestLabelValues(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	err = lc.UploadLog(ctx, opts)
@@ -229,11 +232,14 @@ func AssertLabels(t *testing.T, labels rest.LabelValuesResponse, expectedService
 }
 
 func TestQueryOutput(t *testing.T) {
-	factory.DataDir = t.TempDir()
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
+	fctry.MaxLogsInMem = 1
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
+
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
 
 	opts := &LogOpts{
 		Message: "Time duration execeeded",
@@ -241,7 +247,7 @@ func TestQueryOutput(t *testing.T) {
 		Service: "ap-south1",
 	}
 
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	err = lc.UploadLog(ctx, opts)
@@ -261,12 +267,15 @@ func TestQueryOutput(t *testing.T) {
 		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
 	})
 
-	// Upload log again (should increment count)
+	// Upload 2 log again (should increment count)
 	testutil.Ok(t, lc.UploadLog(ctx, opts), "Failed to upload log again")
+	testutil.Ok(t, lc.UploadLog(ctx, opts), "Failed to upload log again") // exceeds max log in mem (should be flushed to local store)
 
-	// Check log count = 2
+	time.Sleep(5 * time.Second)
+
+	// Check log count = 3
 	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
-		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 2},
+		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 3},
 	})
 }
 
@@ -294,14 +303,15 @@ func TestLogDataUploadToS3(t *testing.T) {
 	})
 	testutil.Ok(t, err)
 
-	factory.DataDir = t.TempDir()
-	factory.MaxRetentionTime = "15s"
-	factory.StoreConfig = string(bktConfig)
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
+	fctry.MaxRetentionTime = "15s"
+	fctry.StoreConfig = string(bktConfig)
 
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -318,7 +328,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 		Service: "myService",
 	}
 
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	err = lc.UploadLog(ctx, opts)
@@ -376,11 +386,12 @@ func TestLogDataUploadToS3(t *testing.T) {
 }
 
 func TestRangeQueries(t *testing.T) {
-	factory.DataDir = t.TempDir()
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
 
 	time.Sleep(2 * time.Second) // wait for servers
 	startTs := time.Now()
@@ -392,7 +403,7 @@ func TestRangeQueries(t *testing.T) {
 		Timestamp: startTs.Unix(),
 	}
 
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	err = lc.UploadLog(ctx, opts)
@@ -445,15 +456,16 @@ func TestRangeQueries(t *testing.T) {
 }
 
 func TestUploadsBatch(t *testing.T) {
-	factory.DataDir = t.TempDir()
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
 
 	time.Sleep(2 * time.Second) // wait for servers
 
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	// Upload single log
@@ -521,18 +533,19 @@ func TestCompaction(t *testing.T) {
 	})
 	testutil.Ok(t, err)
 
-	factory.CompactConfig = string(cfg)
+	fctry := GetNewDefaultFactory()
+	fctry.CompactConfig = string(cfg)
 
-	factory.DataDir = t.TempDir()
-	factory.MaxTimeInMem = "1s"
-	factory.MaxRetentionTime = "3s"
-	factory.CompactDuration = "20s"
-	factory.StoreConfig = string(bktConfig)
+	fctry.DataDir = t.TempDir()
+	fctry.MaxTimeInMem = "1s"
+	fctry.MaxRetentionTime = "3s"
+	fctry.CompactDuration = "20s"
+	fctry.StoreConfig = string(bktConfig)
 
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
 
 	// waiting for server to start
 	time.Sleep(2 * time.Second)
@@ -569,7 +582,7 @@ func TestCompaction(t *testing.T) {
 		testutil.Assert(t, len(queryOutputAfterFlush) == expectedCount, "Expected %d log entry in query output after flushing, got %d", expectedCount, len(queryOutputAfterFlush))
 	}
 
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	testutil.Ok(t, lc.UploadLog(ctx, opts), "logs can't be uploaded")
@@ -626,23 +639,24 @@ func TestCompactionIndex(t *testing.T) {
 	})
 	testutil.Ok(t, err)
 
-	factory.CompactConfig = string(cfg)
-	factory.DataDir = t.TempDir()
-	factory.MaxTimeInMem = "1s"
-	factory.MaxRetentionTime = "10s"
-	factory.CompactDuration = "10s"
-	factory.StoreConfig = string(bktConfig)
+	fctry := GetNewDefaultFactory()
+	fctry.CompactConfig = string(cfg)
+	fctry.DataDir = t.TempDir()
+	fctry.MaxTimeInMem = "1s"
+	fctry.MaxRetentionTime = "10s"
+	fctry.CompactDuration = "10s"
+	fctry.StoreConfig = string(bktConfig)
 
 	ctx := t.Context()
-	serv := ingestion.NewLogIngestorServer(ctx, GetNewDefaultFactory(), metricsObj)
-	go ingestion.StartServer(ctx, serv, factory.GrpcListenAddr, authConfig, nil)
-	go rest.StartServer(ctx, serv, GetNewDefaultFactory(), authConfig, reg)
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
 
 	// wait for servers
 	time.Sleep(2 * time.Second)
 
 	opts := &LogOpts{Message: "compaction index test", Level: "info", Service: "ap-south1"}
-	lc, err := NewLogClient(ctx, factory.GrpcListenAddr)
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
 	testutil.Ok(t, err)
 
 	testutil.Ok(t, lc.UploadLog(ctx, opts))
