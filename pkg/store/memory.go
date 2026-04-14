@@ -1,11 +1,13 @@
 package store
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"maps"
+	"math"
+	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
@@ -22,6 +24,9 @@ type MemoryStore struct {
 	stopOnce        sync.Once
 	next            *Store        // Next store in the chain, if any
 	maxTimeInMemory time.Duration // Maximum time in memory, after which logs are flushed to the next store
+	maxLogsInMem    int64         // Maximum number of logs in memory before flushing to the next store
+	backoff         int32
+	maxLogReached   chan struct{}
 	shutdown        chan struct{} // Channel to signal shutdown of the store
 	flushOnExit     bool
 	skipList        *internal.SkipList
@@ -29,13 +34,18 @@ type MemoryStore struct {
 	index           *ShardedLogIndex // shared log index
 	meta            Labels           // contains all unique labels for this store, this is used to get unique label values
 	metrics         *metrics.Metrics
+	totalLogs       int64
+	done            chan struct{}
 }
 
-func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) *MemoryStore {
+func NewMemoryStore(next *Store, maxTimeInMemory string, maxLogsInMem int64, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) *MemoryStore {
 	mstore := &MemoryStore{
 		mu:              sync.Mutex{},
 		next:            next,
 		maxTimeInMemory: pkg.GetTimeDuration(maxTimeInMemory),
+		maxLogsInMem:    maxLogsInMem,
+		backoff:         getInitialBackoff(maxLogsInMem),
+		maxLogReached:   make(chan struct{}, 1),
 		shutdown:        make(chan struct{}),
 		flushOnExit:     flushOnExit,
 		series:          make(map[LogKey]map[int64]CounterValue),
@@ -44,12 +54,17 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, flushOnExit bool, index
 			Services: make(map[string]int),
 			Levels:   make(map[string]int),
 		},
-		metrics: metrics,
+		metrics:   metrics,
+		totalLogs: 0,
+		done:      make(chan struct{}, 2),
 	}
 
 	mstore.skipList = internal.NewSkipList()
 
 	go mstore.startFlushTimer()
+	if mstore.maxLogsInMem > 0 {
+		go mstore.startBackoffResetTimer()
+	}
 	return mstore
 }
 
@@ -77,6 +92,15 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 		m.meta.Levels[lg.Level]++
 	}
 
+	m.totalLogs += int64(len(logs))
+
+	if m.totalLogs > m.maxLogsInMem {
+		select {
+		case m.maxLogReached <- struct{}{}:
+		default:
+		}
+	}
+
 	m.metrics.LogsIngested.WithLabelValues("memory").Add(float64(len(logs)))
 	return nil
 }
@@ -97,107 +121,82 @@ func (m *MemoryStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql
 	})
 }
 
-func (m *MemoryStore) Flush() error {
-	m.mu.Lock()
-	locked := true
-	defer func() {
-		if locked {
-			m.mu.Unlock()
-		}
-	}()
+func (m *MemoryStore) Flush(cfg FlushConfig) error {
 	var logsToBeFlushed []*logapi.LogEntry
 	seriesToFlush := make(map[LogKey]map[int64]CounterValue)
-	currT := time.Now().Unix()
-	maxThreshold := currT - int64(m.maxTimeInMemory.Seconds())
-
-	timer := prometheus.NewTimer(m.metrics.FlushDuration.WithLabelValues("memory", "local"))
-	defer timer.ObserveDuration()
-	// YOLO
-	if maxThreshold < 0 {
-		return errors.New("invalid maxTimeInMemory parameter set")
-	}
-
-	iter := m.skipList.Seek(internal.IteratorSearchOpts{
-		Start: 0,
-		End:   maxThreshold,
-	})
-
-	for {
-		node, ok := iter.Next()
-		if !ok {
-			break
-		}
-		ts := node.GetKey()
-		logs := node.GetValues()
-
-		for _, log := range logs {
-			entry := &logapi.LogEntry{
-				Service:   log.Service,
-				Level:     log.Level,
-				Message:   log.Message,
-				Timestamp: ts,
-			}
-			logsToBeFlushed = append(logsToBeFlushed, entry)
-
-			logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
-			logSeries, ok := m.series[logKey]
-			if !ok {
-				m.mu.Unlock()
-				return fmt.Errorf("logKey %v not found in series", logKey)
-			}
-			counterVal, ok := logSeries[ts]
-			if !ok {
-				m.mu.Unlock()
-				return fmt.Errorf("timestamp %v not found in series for logKey %v", ts, logKey)
-			}
-			if seriesToFlush[logKey] == nil {
-				seriesToFlush[logKey] = make(map[int64]CounterValue)
-			}
-			seriesToFlush[logKey][ts] = counterVal
-		}
-		m.skipList.Delete(ts)
-	}
-
+	var logsCount int64
 	var localStore *LocalStore
-	for _, log := range logsToBeFlushed {
-		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
-		if _, ok := m.series[logKey]; ok {
-			if _, ok := m.series[logKey][log.Timestamp]; ok {
-				delete(m.series[logKey], log.Timestamp)
-				if len(m.series[logKey]) == 0 {
-					delete(m.series, logKey)
-				}
+
+	func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		currT := time.Now().Unix()
+		maxThreshold := currT - int64(m.maxTimeInMemory.Seconds())
+
+		timer := prometheus.NewTimer(m.metrics.FlushDuration.WithLabelValues("memory", "local"))
+		defer timer.ObserveDuration()
+		// YOLO
+		if maxThreshold < 0 {
+			return
+		}
+
+		if cfg.endTs == 0 {
+			cfg.endTs = maxThreshold
+		}
+
+		if m.next != nil {
+			if nextStore, ok := (*m.next).(*LocalStore); ok {
+				localStore = nextStore
 			} else {
-				return fmt.Errorf("timestamp %v not found in series for logKey %v", log.Timestamp, logKey)
+				log.Println("next store is not a LocalStore, cannot insert logs")
+				return
 			}
-		} else {
-			return fmt.Errorf("logKey %v not found in series", logKey)
 		}
 
-		if _, ok := m.meta.Services[log.Service]; ok {
-			m.meta.Services[log.Service]--
-			if m.meta.Services[log.Service] <= 0 {
-				delete(m.meta.Services, log.Service)
-			}
-		}
-		if _, ok := m.meta.Levels[log.Level]; ok {
-			m.meta.Levels[log.Level]--
-			if m.meta.Levels[log.Level] <= 0 {
-				delete(m.meta.Levels, log.Level)
-			}
-		}
-	}
-	m.mu.Unlock()
-	locked = false
+		iter := m.skipList.Seek(internal.IteratorSearchOpts{
+			Start: cfg.startTs,
+			End:   cfg.endTs,
+		})
 
-	if m.next != nil {
-		if nextStore, ok := (*m.next).(*LocalStore); ok {
-			localStore = nextStore
-		} else {
-			log.Println("next store is not a LocalStore, cannot insert logs")
-			return nil
+		for {
+			node, ok := iter.Next()
+			if !ok {
+				break
+			}
+			ts := node.GetKey()
+			logs := node.GetValues()
+
+			logsCount += int64(len(logs))
+
+			for _, log := range logs {
+				entry := &logapi.LogEntry{
+					Service:   log.Service,
+					Level:     log.Level,
+					Message:   log.Message,
+					Timestamp: ts,
+				}
+				logsToBeFlushed = append(logsToBeFlushed, entry)
+
+				logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
+				logSeries, ok := m.series[logKey]
+				if !ok {
+					return
+				}
+				counterVal, ok := logSeries[ts]
+				if !ok {
+					return
+				}
+				if seriesToFlush[logKey] == nil {
+					seriesToFlush[logKey] = make(map[int64]CounterValue)
+				}
+				seriesToFlush[logKey][ts] = counterVal
+			}
+			if logsCount >= cfg.MaxLogsToFlush && cfg.MaxLogsToFlush > 0 {
+				break
+			}
 		}
-	}
+	}()
 
 	if localStore != nil {
 		if err := localStore.Insert(logsToBeFlushed, seriesToFlush); err != nil {
@@ -205,13 +204,70 @@ func (m *MemoryStore) Flush() error {
 		}
 	}
 
+	func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		for logKey, samples := range seriesToFlush {
+			logSeries, ok := m.series[logKey]
+			if !ok {
+				return
+			}
+			for ts := range samples {
+				if _, ok := logSeries[ts]; !ok {
+					return
+				}
+				delete(logSeries, ts)
+			}
+			if len(logSeries) == 0 {
+				delete(m.series, logKey)
+			}
+		}
+
+		for _, log := range logsToBeFlushed {
+			if _, ok := m.meta.Services[log.Service]; ok {
+				m.meta.Services[log.Service]--
+				if m.meta.Services[log.Service] <= 0 {
+					delete(m.meta.Services, log.Service)
+				}
+			}
+			if _, ok := m.meta.Levels[log.Level]; ok {
+				m.meta.Levels[log.Level]--
+				if m.meta.Levels[log.Level] <= 0 {
+					delete(m.meta.Levels, log.Level)
+				}
+			}
+		}
+
+		for ts := range collectFlushedTimestamps(seriesToFlush) {
+			m.skipList.Delete(ts)
+		}
+
+		m.totalLogs -= logsCount
+	}()
+
 	return nil
+}
+
+func collectFlushedTimestamps(series map[LogKey]map[int64]CounterValue) map[int64]struct{} {
+	timestamps := make(map[int64]struct{})
+	for _, samples := range series {
+		for ts := range samples {
+			timestamps[ts] = struct{}{}
+		}
+	}
+	return timestamps
 }
 
 func (m *MemoryStore) Close() error {
 	m.stopOnce.Do(func() {
 		close(m.shutdown)
 	})
+
+	// wait for flush timers to return
+	for i := 0; i < 2; i++ {
+		<-m.done
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -239,19 +295,74 @@ func (m *MemoryStore) Close() error {
 
 func (m *MemoryStore) startFlushTimer() {
 	ticker := time.NewTicker(m.maxTimeInMemory)
-	defer ticker.Stop()
+	defer func() {
+		ticker.Stop()
+		m.done <- struct{}{}
+	}()
 
 	for {
 		select {
 		case <-ticker.C:
-			m.Flush()
+			m.Flush(
+				FlushConfig{
+					startTs:        0,
+					endTs:          0,
+					MaxLogsToFlush: 0,
+				},
+			)
 		case <-m.shutdown:
 			if m.flushOnExit {
-				m.Flush()
+				m.Flush(
+					FlushConfig{
+						startTs:        0,
+						endTs:          0,
+						MaxLogsToFlush: 0,
+					},
+				)
 			}
 			return
 		}
 	}
+}
+
+func (m *MemoryStore) startBackoffResetTimer() {
+	timer := time.NewTimer(getAdjustedDuration())
+	defer func() {
+		timer.Stop()
+		m.done <- struct{}{}
+	}()
+
+	for {
+		select {
+		case <-timer.C:
+			m.backoff = getInitialBackoff(m.maxLogsInMem)
+			timer.Reset(getAdjustedDuration())
+		case <-m.shutdown:
+			timer.Stop()
+			return
+		case <-m.maxLogReached:
+			if !timer.Stop() {
+				<-timer.C // concurrent firing case, drain this value
+			}
+			timer.Reset(getAdjustedDuration())
+			m.Flush(
+				FlushConfig{
+					startTs:        0,
+					endTs:          math.MaxInt64,
+					MaxLogsToFlush: 1 << (m.backoff + 1),
+				},
+			)
+			atomic.AddInt32(&m.backoff, 1)
+		}
+	}
+}
+
+func getInitialBackoff(maxLogsInMem int64) int32 {
+	return int32(math.Log2(float64((maxLogsInMem + 4 - 1) / 4)))
+}
+
+func getAdjustedDuration() time.Duration {
+	return 30*time.Minute + time.Duration(rand.Intn(20))*time.Minute
 }
 
 // LabelValues returns the unique label values from the local store. We will have chain of stores, so this will return the unique values from all the stores in the chain.

@@ -677,7 +677,7 @@ func (b *BucketStore) Close() error {
 	return nil
 }
 
-func (b *BucketStore) Flush() error {
+func (b *BucketStore) Flush(cfg FlushConfig) error {
 	return nil // nothing next to bucket store
 }
 

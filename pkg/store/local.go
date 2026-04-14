@@ -213,7 +213,7 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 	return results, nil
 }
 
-func (l *LocalStore) Flush() error {
+func (l *LocalStore) Flush(cfg FlushConfig) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -386,11 +386,23 @@ func (l *LocalStore) startFlushTimer() {
 	for {
 		select {
 		case <-ticker.C:
-			l.Flush()
+			l.Flush(
+				FlushConfig{
+					startTs:        0,
+					endTs:          0,
+					MaxLogsToFlush: 0,
+				},
+			)
 			l.lastFlushTime = time.Now().Unix()
 		case <-l.shutdown:
 			if l.flushOnExit {
-				l.Flush()
+				l.Flush(
+					FlushConfig{
+						startTs:        0,
+						endTs:          0,
+						MaxLogsToFlush: 0,
+					},
+				)
 			}
 			return
 		}

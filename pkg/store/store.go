@@ -18,7 +18,7 @@ import (
 // Store interfaces defines the methods that any store implementation should provide.
 type Store interface {
 	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error
-	Flush() error
+	Flush(cfg FlushConfig) error
 	Close() error
 	LabelValues(labels *Labels) error // Returns all the unique label values for services and levels
 	Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error)
@@ -41,6 +41,12 @@ type LogKey struct {
 
 type CounterValue struct {
 	value uint64
+}
+
+type FlushConfig struct {
+	startTs        int64
+	endTs          int64
+	MaxLogsToFlush int64
 }
 
 func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpts badger.Options, metrics *metrics.Metrics) Store {
@@ -75,7 +81,7 @@ func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpt
 	var nextStore Store = localStore
 
 	// memory store
-	memStore := NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.FlushOnExit, shardIndex, metrics) // internally creates a goroutine to flush logs periodically
+	memStore := NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.MaxLogsInMem, factory.FlushOnExit, shardIndex, metrics) // internally creates a goroutine to flush logs periodically
 	var headStore Store = memStore
 
 	return headStore
