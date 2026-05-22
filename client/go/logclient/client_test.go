@@ -66,6 +66,20 @@ func cleanupFactory() {
 	factory.MaxRetentionTime = "10d"
 }
 
+func skipDockerInShortMode(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping Docker/e2e test in short mode")
+	}
+}
+
+func skipContainsQueryUntilEnabled(t *testing.T) {
+	t.Helper()
+	if os.Getenv("LOGSGO_ENABLE_CONTAINS_QUERY_TEST") != "1" {
+		t.Skip("CONTAINS query support is not implemented yet; set LOGSGO_ENABLE_CONTAINS_QUERY_TEST=1 to enable this test")
+	}
+}
+
 type expectedLog struct {
 	Level   string
 	Service string
@@ -279,7 +293,87 @@ func TestQueryOutput(t *testing.T) {
 	})
 }
 
+func TestContainsQueryOutput(t *testing.T) {
+	skipContainsQueryUntilEnabled(t)
+
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
+	ctx := t.Context()
+
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
+
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
+	testutil.Ok(t, err)
+
+	testutil.Ok(t, lc.UploadLog(ctx, &LogOpts{
+		Message: "Time duration execeeded",
+		Level:   "warn",
+		Service: "ap-south1",
+	}))
+	testutil.Ok(t, lc.UploadLog(ctx, &LogOpts{
+		Message: "Notification has been sent",
+		Level:   "info",
+		Service: "myService",
+	}))
+
+	time.Sleep(2 * time.Second)
+
+	tests := []struct {
+		name       string
+		expression string
+		expected   expectedLog
+	}{
+		{
+			name:       "service substring",
+			expression: `service CONTAINS ap`,
+			expected:   expectedLog{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
+		},
+		{
+			name:       "service quoted substring",
+			expression: `service CONTAINS "south"`,
+			expected:   expectedLog{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
+		},
+		{
+			name:       "level substring",
+			expression: `level CONTAINS wa`,
+			expected:   expectedLog{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
+		},
+		{
+			name:       "level quoted substring",
+			expression: `level CONTAINS "warn"`,
+			expected:   expectedLog{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
+		},
+		{
+			name:       "message substring",
+			expression: `message CONTAINS dur`,
+			expected:   expectedLog{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
+		},
+		{
+			name:       "message quoted substring",
+			expression: `message CONTAINS "duration"`,
+			expected:   expectedLog{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
+		},
+	}
+
+	base := "http://localhost:8080/api/v1/query"
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			params := url.Values{}
+			params.Set("expression", tc.expression)
+			params.Set("start", "0")
+			params.Set("end", "0")
+			params.Set("resolution", "0s")
+
+			verifyLogs(t, base+"?"+params.Encode(), []expectedLog{tc.expected})
+		})
+	}
+}
+
 func TestLogDataUploadToS3(t *testing.T) {
+	skipDockerInShortMode(t)
+
 	// start minio server and also docker env
 	e, err := e2e.NewDockerEnvironment("uploadS3test")
 	testutil.Ok(t, err)
@@ -498,6 +592,8 @@ func TestUploadsBatch(t *testing.T) {
 }
 
 func TestCompaction(t *testing.T) {
+	skipDockerInShortMode(t)
+
 	// start minio server and also docker env
 	e, err := e2e.NewDockerEnvironment("uploadS3test")
 	testutil.Ok(t, err)
@@ -603,6 +699,8 @@ func TestCompaction(t *testing.T) {
 // TestCompactionIndex verifies that after compaction runs the per-service index file
 // (index/<service>.json) is created in the bucket and contains at least one entry.
 func TestCompactionIndex(t *testing.T) {
+	skipDockerInShortMode(t)
+
 	// start minio server and docker env
 	e, err := e2e.NewDockerEnvironment("compactionIndex")
 	testutil.Ok(t, err)

@@ -6,6 +6,9 @@ proto: ## Generate Go code from protobuf
 build: ## Build Go binary
 	go build -o logsGo ./cmd/logsGo
 
+test: ## Run unit tests only (skip Docker/e2e tests)
+	@go test -short -v ./... && cat ./.github/surp.txt
+
 tests: ## Run Go tests and show Pikachu on success
 	@go test -v ./... && cat ./.github/surp.txt
 
