@@ -29,7 +29,7 @@ import (
 var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush monitor i.e. ideally maxtimeinmem should be more than 2 seconds then its set
 	MaxTimeInMem:     "8s", // no need to keep it realistic, but a sensible value should be enough, eh !?
 	UnLockDataDir:    true,
-	HttpListenAddr:   ":8080",
+	HttpListenAddr:   ":8084",
 	MaxRetentionTime: "10d", // this is the time after which logs will be deleted from disk
 	WebListenAddr:    "*",
 	LookbackPeriod:   "15m",
@@ -189,7 +189,7 @@ func TestLabelValues(t *testing.T) {
 
 	// there should be persistance in memory store
 
-	resp, err := http.Get("http://localhost:8080/api/v1/labels")
+	resp, err := http.Get("http://localhost:8084/api/v1/labels")
 	testutil.Ok(t, err, "Failed to get label values from REST API")
 	defer resp.Body.Close()
 
@@ -206,7 +206,7 @@ func TestLabelValues(t *testing.T) {
 
 	time.Sleep(9 * time.Second)
 	// now we should have flushed logs to disk, so we should have same labels
-	resp, err = http.Get("http://localhost:8080/api/v1/labels")
+	resp, err = http.Get("http://localhost:8084/api/v1/labels")
 	testutil.Ok(t, err, "Failed to get label values from REST API after flushing")
 	defer resp.Body.Close()
 
@@ -256,14 +256,14 @@ func TestQueryOutput(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Check log in memory
-	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
+	verifyLogs(t, `http://localhost:8084/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
 		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
 	})
 
 	time.Sleep(9 * time.Second) // logs flushed to disk
 
 	// Check log after flush
-	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
+	verifyLogs(t, `http://localhost:8084/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
 		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
 	})
 
@@ -274,7 +274,7 @@ func TestQueryOutput(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	// Check log count = 3
-	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
+	verifyLogs(t, `http://localhost:8084/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
 		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 3},
 	})
 }
@@ -339,7 +339,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 	time.Sleep(20 * time.Second) // TODO: this is time consuming but can't figure out better way, so adding t.Parallel's would do the job
 
 	// query logs now (we do this instead of labelvalues as underlying implementation to fetch is same for now)
-	resp, err := http.Get(`http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`)
+	resp, err := http.Get(`http://localhost:8084/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`)
 	testutil.Ok(t, err, "Failed to get query output from REST API after flushing")
 	defer resp.Body.Close()
 	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
@@ -355,7 +355,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 		testutil.Assert(t, log.Points[0].Count == 1, "Expected log counter to have value 1 got '%d'", log.Points[0].Count)
 	}
 
-	base := "http://localhost:8080/api/v1/query"
+	base := "http://localhost:8084/api/v1/query"
 	params := url.Values{}
 	params.Set("expression", "level=warn&level=info")
 	params.Set("start", "0")
@@ -373,7 +373,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 	testutil.Assert(t, len(queryOutputAfterFlush) == 0, "Expected no log entry in query output after flushing, got %d", len(queryOutputAfterFlush))
 
 	// check for label values now
-	resp, err = http.Get("http://localhost:8080/api/v1/labels")
+	resp, err = http.Get("http://localhost:8084/api/v1/labels")
 	testutil.Ok(t, err, "Failed to get label values from REST API after flushing")
 	defer resp.Body.Close()
 	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
@@ -423,7 +423,7 @@ func TestRangeQueries(t *testing.T) {
 	queryEnd := startTs.Add(30 * time.Minute).Unix()
 	resolution := "15m"
 
-	base := "http://localhost:8080/api/v1/query"
+	base := "http://localhost:8084/api/v1/query"
 	params := url.Values{}
 	params.Set("expression", "level=warn")
 	params.Set("start", strconv.FormatInt(queryStart, 10))
@@ -487,11 +487,11 @@ func TestUploadsBatch(t *testing.T) {
 
 	time.Sleep(2 * time.Second) // wait for logs to be processed
 
-	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=service="testService"&start=0&end=0&resolution=0s`, []expectedLog{
+	verifyLogs(t, `http://localhost:8084/api/v1/query?expression=service="testService"&start=0&end=0&resolution=0s`, []expectedLog{
 		{Level: "info", Service: "testService", Message: "Single log message", Count: 1},
 	})
 
-	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=service="batchService"&start=0&end=0&resolution=0s`, []expectedLog{
+	verifyLogs(t, `http://localhost:8084/api/v1/query?expression=service="batchService"&start=0&end=0&resolution=0s`, []expectedLog{
 		{Level: "error", Service: "batchService", Message: "Batch log 1", Count: 1},
 		{Level: "debug", Service: "batchService", Message: "Batch log 2", Count: 1},
 	})
@@ -563,7 +563,7 @@ func TestCompaction(t *testing.T) {
 	}
 
 	queryEp := func(expectedCount int) {
-		base := "http://localhost:8080/api/v1/query"
+		base := "http://localhost:8084/api/v1/query"
 		params := url.Values{}
 		params.Set("expression", "service=ap-south1")
 		params.Set("start", "0")
