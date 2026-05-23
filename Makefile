@@ -12,6 +12,9 @@ test: ## Run unit tests only (skip Docker/e2e tests)
 tests: ## Run Go tests and show Pikachu on success
 	@go test -v ./... && cat ./.github/surp.txt
 
+query-time-test: ## Run benchmarish query time test
+	LOGSGO_QUERY_TIMING=1 go test ./pkg/store -run 'TestQueryTiming(Memory|Local)Store' -v -count=1
+
 start-react-app: ## Start React app (Vite dev server)
 	cd ./pkg/ui && \
 	npm run dev
