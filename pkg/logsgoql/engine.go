@@ -15,6 +15,7 @@ type Series struct {
 	Service string
 	Level   string
 	Message string
+	Labels  map[string]string
 	Points  []Sample
 }
 

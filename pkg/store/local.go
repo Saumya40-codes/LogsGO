@@ -38,6 +38,11 @@ type LocalStore struct {
 	metrics       *metrics.Metrics
 }
 
+type localStoreValue struct {
+	Count  uint64            `json:"count"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
 func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) (*LocalStore, error) {
 	db, err := pkg.OpenDB(opts)
 	if err != nil {
@@ -87,7 +92,7 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 	}
 	defer file.Close()
 
-	var metaLabels Labels
+	metaLabels := emptyLabels()
 
 	if err := parseLabelsFromFile(file, &metaLabels); err != nil {
 		return fmt.Errorf("failed to parse meta labels: %w", err)
@@ -97,8 +102,9 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 	defer batch.Cancel()
 
 	for _, log := range logs {
-		key := buildLocalStoreKey(log.Timestamp, log.Level, log.Service, log.Message)
-		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
+		customLabels := normalizeCustomLabels(log.Labels)
+		key := buildLocalStoreKey(log.Timestamp, log.Level, log.Service, log.Message, customLabels)
+		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message, CustomLabels: labelsFingerprint(customLabels)}
 		logSeries, ok := series[logKey]
 		if !ok {
 			return fmt.Errorf("logKey %v not found in series", logKey)
@@ -109,13 +115,18 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 			return fmt.Errorf("timestamp %v not found in logKey series", log.Timestamp)
 		}
 
-		valueStr := strconv.FormatUint(entry.value, 10)
-		if err := batch.Set([]byte(key), []byte(valueStr)); err != nil {
+		valueBytes, err := marshalLocalStoreValue(localStoreValue{
+			Count:  entry.value,
+			Labels: customLabels,
+		})
+		if err != nil {
+			return err
+		}
+		if err := batch.Set([]byte(key), valueBytes); err != nil {
 			return fmt.Errorf("failed to save  log to DB: %w", err)
 		}
 
-		metaLabels.Services[log.Service]++
-		metaLabels.Levels[log.Level]++
+		incMetaLabels(&metaLabels, log.Service, log.Level, customLabels)
 	}
 
 	if err := batch.Flush(); err != nil {
@@ -165,7 +176,7 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 		item := it.Item()
 		k := string(item.Key())
 
-		ts, level, service, message, ok := parseLocalStoreKey(k)
+		ts, level, service, message, keyLabels, ok := parseLocalStoreKey(k)
 		if !ok {
 			continue
 		}
@@ -173,7 +184,20 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 			break
 		}
 
-		matched, err := plan.Match(logsgoql.EntryLabels{Service: service, Level: level, Message: message})
+		valCopy, err := item.ValueCopy(nil)
+		if err != nil {
+			continue
+		}
+		stored, err := unmarshalLocalStoreValue(valCopy)
+		if err != nil {
+			continue
+		}
+		customLabels := stored.Labels
+		if len(customLabels) == 0 {
+			customLabels = keyLabels
+		}
+
+		matched, err := plan.Match(logsgoql.EntryLabels{Service: service, Level: level, Message: message, Labels: customLabels})
 		if err != nil {
 			return nil, err
 		}
@@ -181,19 +205,10 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 			continue
 		}
 
-		valCopy, err := item.ValueCopy(nil)
-		if err != nil {
-			continue
-		}
-		countVal, err := strconv.ParseUint(string(valCopy), 10, 64)
-		if err != nil {
-			continue
-		}
-
-		logKey := LogKey{Service: service, Level: level, Message: message}
+		logKey := LogKey{Service: service, Level: level, Message: message, CustomLabels: labelsFingerprint(customLabels)}
 		seriesByKey[logKey] = append(seriesByKey[logKey], logsgoql.Sample{
 			Timestamp: ts,
-			Count:     countVal,
+			Count:     stored.Count,
 		})
 	}
 
@@ -206,6 +221,7 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 			Service: k.Service,
 			Level:   k.Level,
 			Message: k.Message,
+			Labels:  labelsFromFingerprint(k.CustomLabels),
 			Points:  pts,
 		})
 	}
@@ -240,7 +256,7 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 	}
 	defer file.Close()
 
-	var metaLabels Labels
+	metaLabels := emptyLabels()
 	if err := parseLabelsFromFile(file, &metaLabels); err != nil {
 		return fmt.Errorf("failed to parse meta labels: %w", err)
 	}
@@ -253,7 +269,7 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 		item := it.Item()
 		k := string(item.Key())
 
-		timestamp, level, service, message, ok := parseLocalStoreKey(k)
+		timestamp, level, service, message, keyLabels, ok := parseLocalStoreKey(k)
 		if !ok {
 			continue
 		}
@@ -267,22 +283,27 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 			continue
 		}
 
-		countVal, err := strconv.Atoi(string(valCopy))
+		stored, err := unmarshalLocalStoreValue(valCopy)
 		if err != nil {
 			continue
 		}
+		customLabels := stored.Labels
+		if len(customLabels) == 0 {
+			customLabels = keyLabels
+		}
 
-		logKey := LogKey{Service: service, Level: level, Message: message}
+		logKey := LogKey{Service: service, Level: level, Message: message, CustomLabels: labelsFingerprint(customLabels)}
 		if series[logKey] == nil {
 			series[logKey] = make(map[int64]CounterValue)
 		}
-		series[logKey][timestamp] = CounterValue{value: uint64(countVal)}
+		series[logKey][timestamp] = CounterValue{value: stored.Count}
 
 		logs = append(logs, &logapi.LogEntry{
 			Timestamp: timestamp,
 			Level:     level,
 			Service:   service,
 			Message:   message,
+			Labels:    cloneLabels(customLabels),
 		})
 
 		err = batch.Delete(item.KeyCopy(nil))
@@ -290,14 +311,7 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 			log.Printf("failed to batch delete %s: %v", k, err)
 		}
 
-		metaLabels.Services[service]--
-		if metaLabels.Services[service] <= 0 {
-			delete(metaLabels.Services, service)
-		}
-		metaLabels.Levels[level]--
-		if metaLabels.Levels[level] <= 0 {
-			delete(metaLabels.Levels, level)
-		}
+		decMetaLabels(&metaLabels, service, level, customLabels)
 	}
 
 	if l.next != nil {
@@ -344,7 +358,7 @@ func (l *LocalStore) LabelValues(labels *Labels) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	var metaLabels Labels
+	metaLabels := emptyLabels()
 	file, err := getMetaFile(l.dataDir)
 	if err != nil || file == nil {
 		return fmt.Errorf("failed to open meta.json file: %w", os.ErrNotExist)
@@ -356,16 +370,7 @@ func (l *LocalStore) LabelValues(labels *Labels) error {
 		return fmt.Errorf("failed to parse meta labels: %w", err)
 	}
 
-	for service := range metaLabels.Services {
-		if _, exists := labels.Services[service]; !exists {
-			labels.Services[service] = 0
-		}
-	}
-	for level := range metaLabels.Levels {
-		if _, exists := labels.Levels[level]; !exists {
-			labels.Levels[level] = 0
-		}
-	}
+	mergeLabels(labels, &metaLabels)
 
 	if l.next != nil {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
@@ -427,8 +432,7 @@ func getMetaFile(dir string) (*os.File, error) {
 }
 
 func parseLabelsFromFile(file *os.File, labels *Labels) error {
-	labels.Services = make(map[string]int)
-	labels.Levels = make(map[string]int)
+	*labels = emptyLabels()
 
 	var metaLabels Labels
 	decoder := json.NewDecoder(file)
@@ -439,8 +443,15 @@ func parseLabelsFromFile(file *os.File, labels *Labels) error {
 		}
 		return fmt.Errorf("failed to decode meta labels from file: %w", err)
 	}
-	labels.Services = metaLabels.Services
-	labels.Levels = metaLabels.Levels
+	if metaLabels.Services != nil {
+		labels.Services = metaLabels.Services
+	}
+	if metaLabels.Levels != nil {
+		labels.Levels = metaLabels.Levels
+	}
+	if metaLabels.CustomLabels != nil {
+		labels.CustomLabels = metaLabels.CustomLabels
+	}
 	return nil
 }
 
@@ -479,31 +490,62 @@ func writeLabelsToFile(file *os.File, labels Labels, dir string) error {
 	return nil
 }
 
-func buildLocalStoreKey(timestamp int64, level, service, message string) string {
-	return fmt.Sprintf("%020d|%s|%s|%s", timestamp, level, service, EncodeMessage(message))
+func buildLocalStoreKey(timestamp int64, level, service, message string, labels map[string]string) string {
+	encodedMessage := EncodeMessage(message)
+	encodedLabels := encodeLabels(labels)
+	if encodedLabels == "" {
+		return fmt.Sprintf("%020d|%s|%s|%s", timestamp, level, service, encodedMessage)
+	}
+	return fmt.Sprintf("%020d|%s|%s|%s|%s", timestamp, level, service, encodedMessage, encodedLabels)
 }
 
 func localStoreSeekKey(timestamp int64) string {
 	return fmt.Sprintf("%020d|", timestamp)
 }
 
-func parseLocalStoreKey(key string) (timestamp int64, level, service, message string, ok bool) {
-	parts := strings.SplitN(key, "|", 4)
-	if len(parts) != 4 {
-		return 0, "", "", "", false
+func parseLocalStoreKey(key string) (timestamp int64, level, service, message string, labels map[string]string, ok bool) {
+	parts := strings.SplitN(key, "|", 5)
+	if len(parts) != 4 && len(parts) != 5 {
+		return 0, "", "", "", nil, false
 	}
 
 	ts, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		return 0, "", "", "", false
+		return 0, "", "", "", nil, false
 	}
 
 	msg, err := DecodeMessage(parts[3])
 	if err != nil {
-		return 0, "", "", "", false
+		return 0, "", "", "", nil, false
 	}
 
-	return ts, parts[1], parts[2], msg, true
+	if len(parts) == 5 {
+		labels = decodeLabels(parts[4])
+	}
+	return ts, parts[1], parts[2], msg, labels, true
+}
+
+func marshalLocalStoreValue(value localStoreValue) ([]byte, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal local store value: %w", err)
+	}
+	return data, nil
+}
+
+func unmarshalLocalStoreValue(data []byte) (localStoreValue, error) {
+	var value localStoreValue
+	if err := json.Unmarshal(data, &value); err == nil && value.Count > 0 {
+		value.Labels = normalizeCustomLabels(value.Labels)
+		return value, nil
+	}
+
+	countVal, err := strconv.ParseUint(string(data), 10, 64)
+	if err != nil {
+		return value, err
+	}
+	value.Count = countVal
+	return value, nil
 }
 
 // Insert -> key -> fmt.Sprintf("%d|%s|%s", entry.Timestamp, entry.Level, entry.Service) TODO think about how to parse message efficiently

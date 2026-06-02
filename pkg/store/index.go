@@ -27,7 +27,7 @@ func NewShardedLogIndex() *ShardedLogIndex {
 
 func HashLogKey(key LogKey) uint64 {
 	b := make([]byte, 0, 1024)
-	labels := []string{key.Service, key.Level, key.Message}
+	labels := []string{key.Service, key.Level, key.Message, key.CustomLabels}
 	for i, v := range labels {
 		if len(b)+len(v)+1 >= cap(b) {
 			h := xxhash.New()

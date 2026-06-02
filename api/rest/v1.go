@@ -24,8 +24,9 @@ import (
 )
 
 type LabelValuesResponse struct {
-	Services []string
-	Levels   []string
+	Services     []string
+	Levels       []string
+	CustomLabels map[string][]string
 }
 
 func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cfg *pkg.IngestionFactory, authCfg auth.AuthConfig, reg prometheus.Gatherer) {
@@ -115,8 +116,9 @@ func StartServer(ctx context.Context, logServer *ingestion.LogIngestorServer, cf
 
 		api.GET("/labels", func(g *gin.Context) {
 			labels := &store.Labels{
-				Services: make(map[string]int),
-				Levels:   make(map[string]int),
+				Services:     make(map[string]int),
+				Levels:       make(map[string]int),
+				CustomLabels: make(map[string]map[string]int),
 			}
 			err := logServer.Store.LabelValues(labels)
 
@@ -213,8 +215,9 @@ func StartUIServer(ctx context.Context, webListenAddr string) {
 
 func ConvertToResponse(labels store.Labels) LabelValuesResponse {
 	resp := LabelValuesResponse{
-		Services: make([]string, 0),
-		Levels:   make([]string, 0),
+		Services:     make([]string, 0),
+		Levels:       make([]string, 0),
+		CustomLabels: make(map[string][]string),
 	}
 
 	for service := range labels.Services {
@@ -223,6 +226,13 @@ func ConvertToResponse(labels store.Labels) LabelValuesResponse {
 
 	for level := range labels.Levels {
 		resp.Levels = append(resp.Levels, level)
+	}
+
+	for label, values := range labels.CustomLabels {
+		resp.CustomLabels[label] = make([]string, 0, len(values))
+		for value := range values {
+			resp.CustomLabels[label] = append(resp.CustomLabels[label], value)
+		}
 	}
 
 	return resp

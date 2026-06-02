@@ -68,6 +68,7 @@ func (e *Executor) evalInstant(series []Series) ([]Series, error) {
 			Service: s.Service,
 			Level:   s.Level,
 			Message: s.Message,
+			Labels:  s.Labels,
 		}
 		pts := s.Points
 		if len(pts) > 0 {
@@ -137,6 +138,7 @@ func EvalRangeAtResolution(series []Series, startTs, endTs, lookback, resolution
 			Service: s.Service,
 			Level:   s.Level,
 			Message: s.Message,
+			Labels:  s.Labels,
 			Points:  evaluated,
 		})
 	}

@@ -38,6 +38,7 @@ const (
 	FieldService Field = iota + 1
 	FieldLevel
 	FieldMessage
+	FieldLabel
 )
 
 type MatchOp uint8
@@ -47,9 +48,10 @@ const (
 )
 
 type MatchNode struct {
-	Field Field
-	Op    MatchOp
-	Value string
+	Field     Field
+	LabelName string
+	Op        MatchOp
+	Value     string
 }
 
 func (*MatchNode) planNode() {}
@@ -60,6 +62,7 @@ type EntryLabels struct {
 	Service string
 	Level   string
 	Message string
+	Labels  map[string]string
 }
 
 func BuildPlan(expr Expr) (*Plan, error) {
@@ -99,14 +102,14 @@ func buildNode(expr Expr) (Node, error) {
 		return &BinaryNode{Op: op, Left: left, Right: right}, nil
 
 	case *ConditionExpr:
-		field, err := parseField(e.Ident)
+		field, labelName, err := parseField(e.Ident)
 		if err != nil {
 			return nil, err
 		}
 
 		switch e.Operator {
 		case EQ:
-			return &MatchNode{Field: field, Op: MatchEq, Value: e.Value}, nil
+			return &MatchNode{Field: field, LabelName: labelName, Op: MatchEq, Value: e.Value}, nil
 		case CONTAINS:
 			return nil, fmt.Errorf("%w: CONTAINS not supported", ErrNotImplemented)
 		default:
@@ -118,16 +121,20 @@ func buildNode(expr Expr) (Node, error) {
 	}
 }
 
-func parseField(ident string) (Field, error) {
-	switch strings.ToLower(strings.TrimSpace(ident)) {
+func parseField(ident string) (Field, string, error) {
+	cleaned := strings.TrimSpace(ident)
+	switch strings.ToLower(cleaned) {
 	case "service":
-		return FieldService, nil
+		return FieldService, "", nil
 	case "level":
-		return FieldLevel, nil
+		return FieldLevel, "", nil
 	case "message":
-		return FieldMessage, nil
+		return FieldMessage, "", nil
 	default:
-		return 0, fmt.Errorf("%w: unknown field %q", ErrInvalidLabel, ident)
+		if cleaned == "" {
+			return 0, "", fmt.Errorf("%w: empty label", ErrInvalidLabel)
+		}
+		return FieldLabel, cleaned, nil
 	}
 }
 
@@ -178,6 +185,8 @@ func matchNode(n Node, labels EntryLabels) (bool, error) {
 			got = labels.Level
 		case FieldMessage:
 			got = labels.Message
+		case FieldLabel:
+			got = labels.Labels[x.LabelName]
 		default:
 			return false, fmt.Errorf("%w: unknown field %d", ErrInternal, x.Field)
 		}
