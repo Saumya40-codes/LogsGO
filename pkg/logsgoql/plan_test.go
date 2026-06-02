@@ -35,7 +35,7 @@ func TestBuildPlan_InvalidField(t *testing.T) {
 	testutil.Assert(t, len(p.Errors()) == 0, "parser errors: %v", p.Errors())
 
 	_, err := BuildPlan(expr)
-	testutil.Assert(t, err != nil, "expected error")
+	testutil.Assert(t, err == nil, "didn't expected error") // we now support custom labels.
 }
 
 func TestBuildPlan_ContainsNotSupported(t *testing.T) {
