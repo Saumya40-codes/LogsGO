@@ -186,8 +186,8 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	}
 
 	for _, log := range logs {
-		metaData.Services[log.Service]++
-		metaData.Levels[log.Level]++
+		customLabels := normalizeCustomLabels(log.Labels)
+		incMetaLabels(metaData, log.Service, log.Level, customLabels)
 
 		if log.Timestamp > nextTimeStamp {
 			// our logs are sorted, so we can call it end here for one batch
@@ -204,7 +204,7 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 			key = fmt.Sprintf("%d-%d/%s_0.pb", baseTimeStamp, nextTimeStamp, log.Service)
 		}
 
-		logkey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
+		logkey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message, CustomLabels: labelsFingerprint(customLabels)}
 		logSeries, ok := series[logkey]
 		if !ok {
 			return fmt.Errorf("logKey %v not found in series", logkey)
@@ -264,6 +264,7 @@ func (b *BucketStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan
 			Service: k.Service,
 			Level:   k.Level,
 			Message: k.Message,
+			Labels:  labelsFromFingerprint(k.CustomLabels),
 			Points:  pts,
 		})
 	}
@@ -289,11 +290,13 @@ func (b *BucketStore) appendSeriesFromBlock(plan *logsgoql.Plan, iterStart, iter
 		service := e.Entry.Service
 		level := e.Entry.Level
 		message := e.Entry.Message
+		customLabels := normalizeCustomLabels(e.Entry.Labels)
 
 		matched, err := plan.Match(logsgoql.EntryLabels{
 			Service: service,
 			Level:   level,
 			Message: message,
+			Labels:  customLabels,
 		})
 		if err != nil {
 			return err
@@ -302,7 +305,7 @@ func (b *BucketStore) appendSeriesFromBlock(plan *logsgoql.Plan, iterStart, iter
 			continue
 		}
 
-		logKey := LogKey{Service: service, Level: level, Message: message}
+		logKey := LogKey{Service: service, Level: level, Message: message, CustomLabels: labelsFingerprint(customLabels)}
 		seriesByKey[logKey] = append(seriesByKey[logKey], logsgoql.Sample{
 			Timestamp: ts,
 			Count:     e.Count,
@@ -569,11 +572,13 @@ func (b *BucketStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql
 			service := e.Entry.Service
 			level := e.Entry.Level
 			message := e.Entry.Message
+			customLabels := normalizeCustomLabels(e.Entry.Labels)
 
 			matched, err := plan.Match(logsgoql.EntryLabels{
 				Service: service,
 				Level:   level,
 				Message: message,
+				Labels:  customLabels,
 			})
 			if err != nil {
 				return nil, err
@@ -582,7 +587,7 @@ func (b *BucketStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql
 				continue
 			}
 
-			key := LogKey{Service: service, Level: level, Message: message}
+			key := LogKey{Service: service, Level: level, Message: message, CustomLabels: labelsFingerprint(customLabels)}
 			st := stateByKey[key]
 			if st == nil {
 				st = &rangeState{}
@@ -639,6 +644,7 @@ func (b *BucketStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql
 			Service: k.Service,
 			Level:   k.Level,
 			Message: k.Message,
+			Labels:  labelsFromFingerprint(k.CustomLabels),
 			Points:  pts,
 		})
 	}
@@ -691,16 +697,7 @@ func (b *BucketStore) LabelValues(labels *Labels) error {
 	if err != nil {
 		return fmt.Errorf("failed to get metadata: %w", err)
 	}
-	for service := range metaData.Services {
-		if _, exists := labels.Services[service]; !exists {
-			labels.Services[service] = 0
-		}
-	}
-	for level := range metaData.Levels {
-		if _, exists := labels.Levels[level]; !exists {
-			labels.Levels[level] = 0
-		}
-	}
+	mergeLabels(labels, metaData)
 
 	return nil
 }
@@ -733,8 +730,9 @@ func (b *BucketStore) GetMetaData() (*Labels, error) {
 	defer b.mu.Unlock()
 	b.metrics.BucketCalls.Inc()
 	labels := &Labels{
-		Services: make(map[string]int),
-		Levels:   make(map[string]int),
+		Services:     make(map[string]int),
+		Levels:       make(map[string]int),
+		CustomLabels: make(map[string]map[string]int),
 	}
 
 	metaFile := "meta.json"
@@ -751,6 +749,15 @@ func (b *BucketStore) GetMetaData() (*Labels, error) {
 
 	if err := json.Unmarshal(data, labels); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	}
+	if labels.Services == nil {
+		labels.Services = make(map[string]int)
+	}
+	if labels.Levels == nil {
+		labels.Levels = make(map[string]int)
+	}
+	if labels.CustomLabels == nil {
+		labels.CustomLabels = make(map[string]map[string]int)
 	}
 
 	return labels, nil

@@ -70,6 +70,7 @@ type expectedLog struct {
 	Level   string
 	Service string
 	Message string
+	Labels  map[string]string
 	Count   int
 }
 
@@ -91,6 +92,12 @@ func verifyLogs(t *testing.T, url string, expected []expectedLog) {
 		for _, act := range actual {
 			if act.Level == exp.Level && act.Service == exp.Service && act.Message == exp.Message {
 				testutil.Assert(t, act.Points[0].Count == uint64(exp.Count), "Expected count %d, got %d", exp.Count, act.Points[0].Count)
+				if exp.Labels != nil {
+					testutil.Assert(t, len(act.Labels) >= len(exp.Labels), "Expected at least %d labels, got %d", len(exp.Labels), len(act.Labels))
+					for key, value := range exp.Labels {
+						testutil.Assert(t, act.Labels[key] == value, "Expected label %s=%s, got %s", key, value, act.Labels[key])
+					}
+				}
 				found = true
 				break
 			}
@@ -113,6 +120,9 @@ func TestGRPCConn(t *testing.T) {
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
+		Labels: map[string]string {
+			"component": "api",
+		},
 	}
 
 	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
@@ -137,6 +147,9 @@ func TestDirCreated(t *testing.T) {
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
+		Labels: map[string]string {
+			"component": "api",
+		},
 	}
 
 	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
@@ -179,6 +192,9 @@ func TestLabelValues(t *testing.T) {
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
+		Labels: map[string]string{
+			"component": "api",
+		},
 	}
 
 	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
@@ -202,7 +218,8 @@ func TestLabelValues(t *testing.T) {
 	testutil.Ok(t, err, "Failed to decode label values from response")
 	expectedServices := []string{"ap-south1"}
 	expectedLevels := []string{"warn"}
-	AssertLabels(t, labels, expectedServices, expectedLevels)
+	expectedCustomLabels := map[string][]string{"component": {"api"}}
+	AssertLabels(t, labels, expectedServices, expectedLevels, expectedCustomLabels)
 
 	time.Sleep(9 * time.Second)
 	// now we should have flushed logs to disk, so we should have same labels
@@ -215,12 +232,13 @@ func TestLabelValues(t *testing.T) {
 	err = decoder.Decode(&labels)
 	testutil.Ok(t, err, "Failed to decode label values from response after flushing")
 
-	AssertLabels(t, labels, expectedServices, expectedLevels)
+	AssertLabels(t, labels, expectedServices, expectedLevels, expectedCustomLabels)
 }
 
-func AssertLabels(t *testing.T, labels rest.LabelValuesResponse, expectedServices []string, expectedLevels []string) {
+func AssertLabels(t *testing.T, labels rest.LabelValuesResponse, expectedServices []string, expectedLevels []string, expectedCustomLabels map[string][]string) {
 	testutil.Assert(t, len(labels.Services) == len(expectedServices), "Expected %d service labels, got %d", len(expectedServices), len(labels.Services))
 	testutil.Assert(t, len(labels.Levels) == len(expectedLevels), "Expected %d level labels, got %d", len(expectedLevels), len(labels.Levels))
+	testutil.Assert(t, len(labels.CustomLabels) == len(expectedCustomLabels), "Expected %d custom labels, got %d", len(expectedCustomLabels), len(labels.CustomLabels))
 
 	for _, service := range expectedServices {
 		testutil.Assert(t, store.Contains(labels.Services, service), "Expected service label %s not found", service)
@@ -228,6 +246,15 @@ func AssertLabels(t *testing.T, labels rest.LabelValuesResponse, expectedService
 
 	for _, level := range expectedLevels {
 		testutil.Assert(t, store.Contains(labels.Levels, level), "Expected level label %s not found", level)
+	}
+
+	for expectedLabel, expectedValues := range expectedCustomLabels {
+		values, ok := labels.CustomLabels[expectedLabel]
+		testutil.Assert(t, ok, "Expected custom label %s not found", expectedLabel)
+		testutil.Assert(t, len(values) == len(expectedValues), "Expected %d values for custom label %s, got %d", len(expectedValues), expectedLabel, len(values))
+		for _, value := range expectedValues {
+			testutil.Assert(t, store.Contains(values, value), "Expected custom label %s value %s not found", expectedLabel, value)
+		}
 	}
 }
 
@@ -245,6 +272,9 @@ func TestQueryOutput(t *testing.T) {
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
+		Labels: map[string]string{
+			"component": "api",
+		},
 	}
 
 	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
@@ -257,14 +287,14 @@ func TestQueryOutput(t *testing.T) {
 
 	// Check log in memory
 	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
-		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
+		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Labels: map[string]string{"component": "api"}, Count: 1},
 	})
 
 	time.Sleep(9 * time.Second) // logs flushed to disk
 
 	// Check log after flush
 	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
-		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 1},
+		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Labels: map[string]string{"component": "api"}, Count: 1},
 	})
 
 	// Upload 2 log again (should increment count)
@@ -275,7 +305,11 @@ func TestQueryOutput(t *testing.T) {
 
 	// Check log count = 3
 	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
-		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Count: 3},
+		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Labels: map[string]string{"component": "api"}, Count: 3},
+	})
+	// querying with custom label
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=component="api"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "warn", Service: "ap-south1", Message: "Time duration execeeded", Labels: map[string]string{"component": "api"}, Count: 3},
 	})
 }
 
@@ -320,12 +354,18 @@ func TestLogDataUploadToS3(t *testing.T) {
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
+		Labels: map[string]string{
+			"component": "api",
+		},
 	}
 
 	newOpt := &LogOpts{
 		Message: "Notification has been sent",
 		Level:   "info",
 		Service: "myService",
+		Labels: map[string]string{
+			"component": "api",
+		},
 	}
 
 	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
@@ -336,7 +376,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 
 	testutil.Ok(t, lc.UploadLog(ctx, newOpt), "logs can't be uploaded")
 
-	time.Sleep(20 * time.Second) // TODO: this is time consuming but can't figure out better way, so adding t.Parallel's would do the job
+	time.Sleep(35 * time.Second) // TODO: this is time consuming but can't figure out better way, so adding t.Parallel's would do the job
 
 	// query logs now (we do this instead of labelvalues as underlying implementation to fetch is same for now)
 	resp, err := http.Get(`http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`)
@@ -353,6 +393,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 		testutil.Assert(t, log.Service == "ap-south1", "Expected log service 'ap-south1', got '%s'", log.Service)
 		testutil.Assert(t, log.Message == "Time duration execeeded", "Expected log message 'Time duration execeeded', got '%s'", log.Message)
 		testutil.Assert(t, log.Points[0].Count == 1, "Expected log counter to have value 1 got '%d'", log.Points[0].Count)
+		testutil.Assert(t, log.Labels["component"] == "api", "Expected log component label 'api', got '%s'", log.Labels["component"])
 	}
 
 	base := "http://localhost:8080/api/v1/query"
@@ -383,6 +424,7 @@ func TestLogDataUploadToS3(t *testing.T) {
 	testutil.Ok(t, err, "Failed to decode label values from response after flushing")
 	testutil.Assert(t, len(labels.Services) == 2, "Expected 2 service labels, got %d", len(labels.Services))
 	testutil.Assert(t, len(labels.Levels) == 2, "Expected 2 level labels, got %d", len(labels.Levels))
+	testutil.Assert(t, len(labels.CustomLabels) == 1, "Expected 1 custom label, got %d", len(labels.CustomLabels))
 }
 
 func TestRangeQueries(t *testing.T) {
@@ -473,14 +515,17 @@ func TestUploadsBatch(t *testing.T) {
 		Message: "Single log message",
 		Level:   "info",
 		Service: "testService",
+		Labels: map[string]string{
+			"component": "proxy",
+		},
 	}
 	testutil.Ok(t, lc.UploadLog(ctx, opts), "Failed to upload single log")
 
 	// Upload batch of logs
 	batch := &LogBatch{
 		Entries: []*LogOpts{
-			{Message: "Batch log 1", Level: "error", Service: "batchService"},
-			{Message: "Batch log 2", Level: "debug", Service: "batchService"},
+			{Message: "Batch log 1", Level: "error", Service: "batchService", Labels: map[string]string{"component": "proxy"}},
+			{Message: "Batch log 2", Level: "debug", Service: "batchService", Labels: map[string]string{"component": "proxy"}},
 		},
 	}
 	testutil.Ok(t, lc.UploadLogs(ctx, batch), "Failed to upload batch of logs")
@@ -488,12 +533,18 @@ func TestUploadsBatch(t *testing.T) {
 	time.Sleep(2 * time.Second) // wait for logs to be processed
 
 	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=service="testService"&start=0&end=0&resolution=0s`, []expectedLog{
-		{Level: "info", Service: "testService", Message: "Single log message", Count: 1},
+		{Level: "info", Service: "testService", Message: "Single log message", Labels: map[string]string{"component": "proxy"}, Count: 1},
 	})
 
 	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=service="batchService"&start=0&end=0&resolution=0s`, []expectedLog{
-		{Level: "error", Service: "batchService", Message: "Batch log 1", Count: 1},
-		{Level: "debug", Service: "batchService", Message: "Batch log 2", Count: 1},
+		{Level: "error", Service: "batchService", Message: "Batch log 1", Labels: map[string]string{"component": "proxy"}, Count: 1},
+		{Level: "debug", Service: "batchService", Message: "Batch log 2", Labels: map[string]string{"component": "proxy"}, Count: 1},
+	})
+
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=component="proxy"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "info", Service: "testService", Message: "Single log message", Labels: map[string]string{"component": "proxy"}, Count: 1},
+		{Level: "error", Service: "batchService", Message: "Batch log 1", Labels: map[string]string{"component": "proxy"}, Count: 1},
+		{Level: "debug", Service: "batchService", Message: "Batch log 2", Labels: map[string]string{"component": "proxy"}, Count: 1},
 	})
 }
 

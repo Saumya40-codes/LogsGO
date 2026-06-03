@@ -50,13 +50,10 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, maxLogsInMem int64, flu
 		flushOnExit:     flushOnExit,
 		series:          make(map[LogKey]map[int64]CounterValue),
 		index:           index,
-		meta: Labels{
-			Services: make(map[string]int),
-			Levels:   make(map[string]int),
-		},
-		metrics:   metrics,
-		totalLogs: 0,
-		done:      make(chan struct{}, 2),
+		meta:            emptyLabels(),
+		metrics:         metrics,
+		totalLogs:       0,
+		done:            make(chan struct{}, 2),
 	}
 
 	mstore.skipList = internal.NewSkipList()
@@ -76,7 +73,8 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 	defer timer.ObserveDuration()
 
 	for _, lg := range logs {
-		key := LogKey{lg.Service, lg.Message, lg.Level}
+		customLabels := normalizeCustomLabels(lg.Labels)
+		key := LogKey{Service: lg.Service, Message: lg.Message, Level: lg.Level, CustomLabels: labelsFingerprint(customLabels)}
 		ts := lg.Timestamp
 		m.index.Inc(key)
 		shardedSeries := m.index.getShard(key)
@@ -86,10 +84,9 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 		newCounterVal := shardedSeries.data[key]
 		m.series[key][ts] = *newCounterVal
 
-		m.skipList.Insert(ts, internal.Value{Service: lg.Service, Level: lg.Level, Message: lg.Message})
+		m.skipList.Insert(ts, internal.Value{Service: lg.Service, Level: lg.Level, Message: lg.Message, Labels: cloneLabels(customLabels)})
 
-		m.meta.Services[lg.Service]++
-		m.meta.Levels[lg.Level]++
+		incMetaLabels(&m.meta, lg.Service, lg.Level, customLabels)
 	}
 
 	m.totalLogs += int64(len(logs))
@@ -175,10 +172,11 @@ func (m *MemoryStore) Flush(cfg FlushConfig) error {
 					Level:     log.Level,
 					Message:   log.Message,
 					Timestamp: ts,
+					Labels:    cloneLabels(log.Labels),
 				}
 				logsToBeFlushed = append(logsToBeFlushed, entry)
 
-				logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message}
+				logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message, CustomLabels: labelsFingerprint(log.Labels)}
 				logSeries, ok := m.series[logKey]
 				if !ok {
 					return
@@ -225,18 +223,7 @@ func (m *MemoryStore) Flush(cfg FlushConfig) error {
 		}
 
 		for _, log := range logsToBeFlushed {
-			if _, ok := m.meta.Services[log.Service]; ok {
-				m.meta.Services[log.Service]--
-				if m.meta.Services[log.Service] <= 0 {
-					delete(m.meta.Services, log.Service)
-				}
-			}
-			if _, ok := m.meta.Levels[log.Level]; ok {
-				m.meta.Levels[log.Level]--
-				if m.meta.Levels[log.Level] <= 0 {
-					delete(m.meta.Levels, log.Level)
-				}
-			}
+			decMetaLabels(&m.meta, log.Service, log.Level, log.Labels)
 		}
 
 		for ts := range collectFlushedTimestamps(seriesToFlush) {
@@ -274,10 +261,7 @@ func (m *MemoryStore) Close() error {
 
 	m.series = make(map[LogKey]map[int64]CounterValue)
 	m.skipList = internal.NewSkipList()
-	m.meta = Labels{
-		Services: make(map[string]int),
-		Levels:   make(map[string]int),
-	}
+	m.meta = emptyLabels()
 
 	// Close the next store if it exists
 	if m.next != nil {
@@ -370,10 +354,13 @@ func (m *MemoryStore) LabelValues(labels *Labels) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	labels.Services = make(map[string]int)
-	labels.Levels = make(map[string]int)
+	*labels = emptyLabels()
 	maps.Copy(labels.Services, m.meta.Services)
 	maps.Copy(labels.Levels, m.meta.Levels)
+	for label, values := range m.meta.CustomLabels {
+		labels.CustomLabels[label] = make(map[string]int)
+		maps.Copy(labels.CustomLabels[label], values)
+	}
 
 	if localStore, ok := (*m.next).(*LocalStore); ok {
 		err := localStore.LabelValues(labels)
@@ -405,7 +392,8 @@ func (m *MemoryStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.P
 		seenThisTs := make(map[LogKey]struct{})
 
 		for _, v := range node.GetValues() {
-			logKey := LogKey{Service: v.Service, Level: v.Level, Message: v.Message}
+			customLabels := normalizeCustomLabels(v.Labels)
+			logKey := LogKey{Service: v.Service, Level: v.Level, Message: v.Message, CustomLabels: labelsFingerprint(customLabels)}
 			if _, seen := seenThisTs[logKey]; seen {
 				continue
 			}
@@ -415,6 +403,7 @@ func (m *MemoryStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.P
 				Service: v.Service,
 				Level:   v.Level,
 				Message: v.Message,
+				Labels:  customLabels,
 			})
 			if err != nil {
 				return nil, err
@@ -445,6 +434,7 @@ func (m *MemoryStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.P
 			Service: k.Service,
 			Level:   k.Level,
 			Message: k.Message,
+			Labels:  labelsFromFingerprint(k.CustomLabels),
 			Points:  pts,
 		})
 	}

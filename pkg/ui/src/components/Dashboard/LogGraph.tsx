@@ -33,7 +33,18 @@ const formatTimestamp = (ts: number) =>
         minute: "2-digit",
     });
 
-const formatSeriesTitle = (log: LogsPayload) => `${log.Service} · ${log.Level}`;
+const formatLabels = (labels?: Record<string, string>) => {
+    if (!labels || Object.keys(labels).length === 0) return "";
+    return Object.entries(labels)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, value]) => `${key}=${value}`)
+        .join(", ");
+};
+
+const formatSeriesTitle = (log: LogsPayload) => {
+    const labels = formatLabels(log.Labels);
+    return labels ? `${log.Service} · ${log.Level} · ${labels}` : `${log.Service} · ${log.Level}`;
+};
 
 const buildPath = (points: ChartPoint[]) =>
     points
@@ -102,7 +113,7 @@ const LogGraph = ({ logs, startTs, endTs }: LogGraphProps) => {
                         const maxCount = Math.max(...counts, 1);
 
                         return (
-                            <section key={`${log.Service}-${log.Level}-${log.Message}`} className={styles.seriesCard}>
+                            <section key={`${log.Service}-${log.Level}-${log.Message}-${formatLabels(log.Labels)}`} className={styles.seriesCard}>
                                 <div className={styles.seriesHeader}>
                                     <div>
                                         <Text fw={600} className={styles.seriesTitle}>

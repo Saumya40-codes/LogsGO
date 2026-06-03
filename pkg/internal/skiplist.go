@@ -8,6 +8,7 @@ type Value struct {
 	Service string
 	Level   string
 	Message string
+	Labels  map[string]string
 }
 
 type Node struct {

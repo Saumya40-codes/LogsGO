@@ -71,11 +71,20 @@ const SuggestionFilter = ({
       
       const services = Array.isArray(data.Services) ? data.Services : [];
       const levels = Array.isArray(data.Levels) ? data.Levels : [];
+      const customLabels = data.CustomLabels && typeof data.CustomLabels === 'object'
+        ? data.CustomLabels
+        : {};
+      const customLabelKeys = Object.keys(customLabels).filter(k => typeof k === 'string' && k.trim());
+      const customLabelValues = Object.values(customLabels)
+        .flat()
+        .filter(v => typeof v === 'string' && v.trim());
       
       const newLabels = Array.from(new Set([
         ...defaultLabels.labels,
+        ...customLabelKeys,
         ...services.filter(s => typeof s === 'string' && s.trim()),
         ...levels.filter(l => typeof l === 'string' && l.trim()),
+        ...customLabelValues,
       ]));
       
       const newDescriptionMap: Record<string, string> = {
@@ -92,6 +101,16 @@ const SuggestionFilter = ({
         if (typeof level === 'string' && level.trim()) {
           newDescriptionMap[level] = `Filter logs by log level: ${level}`;
         }
+      });
+
+      customLabelKeys.forEach((label: string) => {
+        newDescriptionMap[label] = `Filter logs by ${label}`;
+        const values = Array.isArray(customLabels[label]) ? customLabels[label] : [];
+        values.forEach((value: string) => {
+          if (typeof value === 'string' && value.trim()) {
+            newDescriptionMap[value] = `Filter logs where ${label} is ${value}`;
+          }
+        });
       });
       
       setAllLabels(newLabels);

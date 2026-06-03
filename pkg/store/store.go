@@ -20,23 +20,24 @@ type Store interface {
 	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error
 	Flush(cfg FlushConfig) error
 	Close() error
-	LabelValues(labels *Labels) error // Returns all the unique label values for services and levels
+	LabelValues(labels *Labels) error // Returns all unique label values.
 	Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error)
 	SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error)
 	// TODO: Find what else we need here
 }
 
 type Labels struct {
-	Services map[string]int
-	Levels   map[string]int
-	// TODO: Add support for custom labels in the future
+	Services     map[string]int
+	Levels       map[string]int
+	CustomLabels map[string]map[string]int
 }
 
 // key used for mappings
 type LogKey struct {
-	Service string
-	Message string
-	Level   string
+	Service      string
+	Message      string
+	Level        string
+	CustomLabels string
 }
 
 type CounterValue struct {

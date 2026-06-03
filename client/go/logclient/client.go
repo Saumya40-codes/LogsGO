@@ -38,6 +38,8 @@ type LogOpts struct {
 	Message string
 	// Timestamp is the time when the log was created, if not provided it will be set to current time in Unix format
 	Timestamp int64
+	// Labels are additional custom key/value labels for querying logs.
+	Labels map[string]string
 }
 
 type LogBatch struct {
@@ -161,6 +163,7 @@ func (c *Client) UploadLog(ctx context.Context, entry *LogOpts) error {
 		Level:     entry.Level,
 		Message:   entry.Message,
 		Timestamp: entry.Timestamp,
+		Labels:    entry.Labels,
 	}
 
 	res, err := c.client.UploadLog(ctx, logEntry)
@@ -265,6 +268,7 @@ func convertLogOptsToProto(entry *LogOpts) (*logapi.LogEntry, error) {
 		Level:     entry.Level,
 		Message:   entry.Message,
 		Timestamp: entry.Timestamp,
+		Labels:    entry.Labels,
 	}, nil
 }
 

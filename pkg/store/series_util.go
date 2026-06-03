@@ -70,13 +70,13 @@ func mergeTierSeriesPreferLeft(left, right []logsgoql.Series) []logsgoql.Series 
 	out := make(map[string]logsgoql.Series, len(left)+len(right))
 
 	for _, s := range right {
-		key := s.Service + "|" + s.Level + "|" + s.Message
+		key := s.Service + "|" + s.Level + "|" + s.Message + "|" + labelsFingerprint(s.Labels)
 		s.Points = compactSamplesByTimestamp(s.Points)
 		out[key] = s
 	}
 
 	for _, s := range left {
-		key := s.Service + "|" + s.Level + "|" + s.Message
+		key := s.Service + "|" + s.Level + "|" + s.Message + "|" + labelsFingerprint(s.Labels)
 		s.Points = compactSamplesByTimestamp(s.Points)
 
 		if existing, ok := out[key]; ok {
