@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"sort"
@@ -80,16 +81,18 @@ func labelsFromFingerprint(fingerprint string) map[string]string {
 	if fingerprint == "" {
 		return nil
 	}
-	parts := strings.Split(fingerprint, string(customLabelSeparator))
+
+	parts := bytes.Split([]byte(fingerprint), []byte{customLabelSeparator})
 	if len(parts) < 2 {
 		return nil
 	}
+
 	labels := make(map[string]string)
 	for i := 0; i+1 < len(parts); i += 2 {
-		if parts[i] == "" {
+		if len(parts[i]) == 0 {
 			continue
 		}
-		labels[parts[i]] = parts[i+1]
+		labels[string(parts[i])] = string(parts[i+1])
 	}
 	return labels
 }
