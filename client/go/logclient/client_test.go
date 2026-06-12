@@ -29,7 +29,7 @@ import (
 var factory = pkg.IngestionFactory{ // we wait 2 seconds before starting flush monitor i.e. ideally maxtimeinmem should be more than 2 seconds then its set
 	MaxTimeInMem:     "8s", // no need to keep it realistic, but a sensible value should be enough, eh !?
 	UnLockDataDir:    true,
-	HttpListenAddr:   ":8080",
+	HttpListenAddr:   ":8081",
 	MaxRetentionTime: "10d", // this is the time after which logs will be deleted from disk
 	WebListenAddr:    "*",
 	LookbackPeriod:   "15m",
@@ -120,7 +120,7 @@ func TestGRPCConn(t *testing.T) {
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
-		Labels: map[string]string {
+		Labels: map[string]string{
 			"component": "api",
 		},
 	}
@@ -147,7 +147,7 @@ func TestDirCreated(t *testing.T) {
 		Message: "Time duration execeeded",
 		Level:   "warn",
 		Service: "ap-south1",
-		Labels: map[string]string {
+		Labels: map[string]string{
 			"component": "api",
 		},
 	}
