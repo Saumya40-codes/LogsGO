@@ -13,6 +13,9 @@ import (
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/dgraph-io/badger/v4"
+
+	_ "github.com/cockroachdb/pebble"
+	_ "github.com/parquet-go/parquet-go"
 )
 
 // Store interfaces defines the methods that any store implementation should provide.
