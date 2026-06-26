@@ -77,3 +77,20 @@ go tool pprof -http=:0 http://127.0.0.1:8080/debug/pprof/profile?seconds=15
 go tool pprof http://127.0.0.1:8080/debug/pprof/heap
 go tool pprof http://127.0.0.1:8080/debug/pprof/mutex
 ```
+
+## Docker chaos stack (preferred)
+
+```bash
+cd chaos
+docker compose up -d --build
+# host loadgen hits published ports
+cd .. && go build -o chaos/loadgen ./chaos/loadgen.go
+./chaos/loadgen -grpc 127.0.0.1:50051 -http http://127.0.0.1:8080 -scenario all -duration 20s -workers 40
+```
+
+Prometheus scrapes `logsgo:8080` on the `logsgo-chaos` network; host MCP uses `http://127.0.0.1:9090`.
+
+```bash
+docker compose -f chaos/docker-compose.yml down -v
+```
+

@@ -1,0 +1,54 @@
+# Chaos test stack: LogsGO (local image) + Prometheus
+# Load generator runs on the host against published ports.
+networks:
+  chaos:
+    name: logsgo-chaos
+
+services:
+  logsgo:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: logsgo:chaos
+    container_name: logsgo-chaos
+    networks:
+      - chaos
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+      - "19091:19091"
+    volumes:
+      - ./data:/data
+    command:
+      - --data-dir=/data
+      - --http-listen-addr=0.0.0.0:8080
+      - --grpc-listen-addr=0.0.0.0:50051
+      - --web-listen-addr=0.0.0.0:19091
+      - --max-time-in-mem=30s
+      - --max-logs-in-mem=2000
+      - --max-retention-time=5m
+      - --lookback-period=15m
+      - --unlock-data-dir
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/v1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: logsgo-prom
+    networks:
+      - chaos
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.listen-address=0.0.0.0:9090
+      - --web.enable-lifecycle
+      - --enable-feature=native-histograms,promql-experimental-functions
+    depends_on:
+      - logsgo

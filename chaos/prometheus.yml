@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+scrape_configs:
+  - job_name: logsGo
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - logsgo:8080
+        labels:
+          instance: logsgo-chaos-docker
+          env: chaos
