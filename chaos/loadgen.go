@@ -19,15 +19,15 @@ import (
 )
 
 var (
-	grpcAddr   = flag.String("grpc", "127.0.0.1:50051", "gRPC address")
-	httpAddr   = flag.String("http", "http://127.0.0.1:8080", "HTTP base URL")
-	scenario   = flag.String("scenario", "all", "scenario: ingest|batch|query|mixed|cardinality|burst|all")
-	duration   = flag.Duration("duration", 45*time.Second, "run duration")
-	workers    = flag.Int("workers", 32, "concurrent workers")
-	batchSize  = flag.Int("batch", 50, "batch size for batch scenario")
-	services   = flag.Int("services", 20, "distinct services")
-	levels     = []string{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"}
-	messages   = []string{
+	grpcAddr  = flag.String("grpc", "127.0.0.1:50051", "gRPC address")
+	httpAddr  = flag.String("http", "http://127.0.0.1:8080", "HTTP base URL")
+	scenario  = flag.String("scenario", "all", "scenario: ingest|batch|query|mixed|cardinality|burst|all")
+	duration  = flag.Duration("duration", 45*time.Second, "run duration")
+	workers   = flag.Int("workers", 32, "concurrent workers")
+	batchSize = flag.Int("batch", 50, "batch size for batch scenario")
+	services  = flag.Int("services", 20, "distinct services")
+	levels    = []string{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"}
+	messages  = []string{
 		"request completed", "db timeout", "cache miss", "auth failed",
 		"queue lag high", "retrying upstream", "payload too large", "slow query",
 	}

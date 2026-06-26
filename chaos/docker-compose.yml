@@ -29,12 +29,6 @@ services:
       - --max-retention-time=5m
       - --lookback-period=15m
       - --unlock-data-dir
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/v1/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
 
   prometheus:
     image: prom/prometheus:latest

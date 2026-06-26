@@ -105,17 +105,20 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 }
 
 func (m *MemoryStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
+	// Exclusive lock: SkipList is not safe for concurrent iterators while another
+	// reader walks it (and writers always take Lock). Prefer correctness over
+	// parallel query fan-out on the memory tier.
 	return tieredSeries(queryCtx, plan, 0, m.next, func() ([]logsgoql.Series, error) {
-		m.mu.RLock()
-		defer m.mu.RUnlock()
+		m.mu.Lock()
+		defer m.mu.Unlock()
 		return m.getSeries(queryCtx, plan)
 	})
 }
 
 func (m *MemoryStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error) {
 	return tieredSeries(queryCtx, plan, resolution, m.next, func() ([]logsgoql.Series, error) {
-		m.mu.RLock()
-		defer m.mu.RUnlock()
+		m.mu.Lock()
+		defer m.mu.Unlock()
 		return m.getSeries(queryCtx, plan)
 	})
 }
@@ -358,6 +361,7 @@ func getAdjustedDuration() time.Duration {
 
 // LabelValues returns the unique label values from the local store. We will have chain of stores, so this will return the unique values from all the stores in the chain.
 func (m *MemoryStore) LabelValues(labels *Labels) error {
+	// Snapshot under RLock; meta maps are only mutated under Lock.
 	m.mu.RLock()
 	*labels = emptyLabels()
 	maps.Copy(labels.Services, m.meta.Services)
@@ -368,6 +372,9 @@ func (m *MemoryStore) LabelValues(labels *Labels) error {
 	}
 	m.mu.RUnlock()
 
+	if m.next == nil {
+		return nil
+	}
 	if localStore, ok := (*m.next).(*LocalStore); ok {
 		err := localStore.LabelValues(labels)
 		if err != nil {

@@ -1,6 +1,6 @@
 ./cmd/logsGo/logsgo
 logsGo
 data/
-# chaos loadgen binary
+# chaos runtime artifacts
 chaos/loadgen
-logsGo
+chaos/data/

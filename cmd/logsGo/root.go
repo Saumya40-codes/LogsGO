@@ -57,7 +57,9 @@ var rootCmd = &cobra.Command{
 
 		metricsObj := metrics.NewMetrics()
 		reg := prometheus.NewRegistry()
-		metricsObj.RegisterMetrics(reg)
+		if err := metricsObj.RegisterMetrics(reg); err != nil {
+			log.Fatalf("failed to register metrics: %v", err)
+		}
 
 		wg := &sync.WaitGroup{}
 		serv := ingestion.NewLogIngestorServer(ctx, cfg, metricsObj)

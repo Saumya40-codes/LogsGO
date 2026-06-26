@@ -38,9 +38,9 @@ type LocalStore struct {
 	metrics       *metrics.Metrics
 	// meta is an in-memory cache of meta.json so inserts don't re-read the file
 	// on every batch (hot path under load).
-	meta          Labels
-	metaLoaded    bool
-	currentLogs   int64
+	meta        Labels
+	metaLoaded  bool
+	currentLogs int64
 }
 
 type localStoreValue struct {
@@ -119,6 +119,15 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 	batch := l.db.Conn.NewWriteBatch()
 	defer batch.Cancel()
 
+	// Stage meta updates; only apply after the badger batch succeeds so a failed
+	// flush cannot leave the in-memory meta cache ahead of durable storage.
+	type metaDelta struct {
+		service string
+		level   string
+		labels  map[string]string
+	}
+	deltas := make([]metaDelta, 0, len(logs))
+
 	for _, log := range logs {
 		customLabels := normalizeCustomLabels(log.Labels)
 		key := buildLocalStoreKey(log.Timestamp, log.Level, log.Service, log.Message, customLabels)
@@ -144,11 +153,15 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 			return fmt.Errorf("failed to save  log to DB: %w", err)
 		}
 
-		incMetaLabels(&l.meta, log.Service, log.Level, customLabels)
+		deltas = append(deltas, metaDelta{service: log.Service, level: log.Level, labels: customLabels})
 	}
 
 	if err := batch.Flush(); err != nil {
 		return fmt.Errorf("failed to flush local insert batch: %w", err)
+	}
+
+	for _, d := range deltas {
+		incMetaLabels(&l.meta, d.service, d.level, d.labels)
 	}
 
 	// Persist meta once per batch from the in-memory cache (avoids full re-read).
