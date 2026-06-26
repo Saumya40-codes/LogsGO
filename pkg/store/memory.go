@@ -20,7 +20,7 @@ import (
 
 // MemoryStore implements the Store interface using an in-memory map.
 type MemoryStore struct {
-	mu              sync.Mutex
+	mu              sync.RWMutex
 	stopOnce        sync.Once
 	next            *Store        // Next store in the chain, if any
 	maxTimeInMemory time.Duration // Maximum time in memory, after which logs are flushed to the next store
@@ -40,7 +40,7 @@ type MemoryStore struct {
 
 func NewMemoryStore(next *Store, maxTimeInMemory string, maxLogsInMem int64, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) *MemoryStore {
 	mstore := &MemoryStore{
-		mu:              sync.Mutex{},
+		mu:              sync.RWMutex{},
 		next:            next,
 		maxTimeInMemory: pkg.GetTimeDuration(maxTimeInMemory),
 		maxLogsInMem:    maxLogsInMem,
@@ -57,6 +57,7 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, maxLogsInMem int64, flu
 	}
 
 	mstore.skipList = internal.NewSkipList()
+	mstore.metrics.CurrentLogsIngested.WithLabelValues("memory").Set(0)
 
 	go mstore.startFlushTimer()
 	if mstore.maxLogsInMem > 0 {
@@ -99,21 +100,22 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 	}
 
 	m.metrics.LogsIngested.WithLabelValues("memory").Add(float64(len(logs)))
+	m.metrics.CurrentLogsIngested.WithLabelValues("memory").Set(float64(m.totalLogs))
 	return nil
 }
 
 func (m *MemoryStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
 	return tieredSeries(queryCtx, plan, 0, m.next, func() ([]logsgoql.Series, error) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
+		m.mu.RLock()
+		defer m.mu.RUnlock()
 		return m.getSeries(queryCtx, plan)
 	})
 }
 
 func (m *MemoryStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error) {
 	return tieredSeries(queryCtx, plan, resolution, m.next, func() ([]logsgoql.Series, error) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
+		m.mu.RLock()
+		defer m.mu.RUnlock()
 		return m.getSeries(queryCtx, plan)
 	})
 }
@@ -179,11 +181,12 @@ func (m *MemoryStore) Flush(cfg FlushConfig) error {
 				logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message, CustomLabels: labelsFingerprint(log.Labels)}
 				logSeries, ok := m.series[logKey]
 				if !ok {
-					return
+					// Skip orphan skiplist entries instead of aborting the whole flush.
+					continue
 				}
 				counterVal, ok := logSeries[ts]
 				if !ok {
-					return
+					continue
 				}
 				if seriesToFlush[logKey] == nil {
 					seriesToFlush[logKey] = make(map[int64]CounterValue)
@@ -196,7 +199,7 @@ func (m *MemoryStore) Flush(cfg FlushConfig) error {
 		}
 	}()
 
-	if localStore != nil {
+	if localStore != nil && len(logsToBeFlushed) > 0 {
 		if err := localStore.Insert(logsToBeFlushed, seriesToFlush); err != nil {
 			return fmt.Errorf("failed to insert logs into next store: %w", err)
 		}
@@ -209,12 +212,9 @@ func (m *MemoryStore) Flush(cfg FlushConfig) error {
 		for logKey, samples := range seriesToFlush {
 			logSeries, ok := m.series[logKey]
 			if !ok {
-				return
+				continue
 			}
 			for ts := range samples {
-				if _, ok := logSeries[ts]; !ok {
-					return
-				}
 				delete(logSeries, ts)
 			}
 			if len(logSeries) == 0 {
@@ -231,6 +231,13 @@ func (m *MemoryStore) Flush(cfg FlushConfig) error {
 		}
 
 		m.totalLogs -= logsCount
+		if m.totalLogs < 0 {
+			m.totalLogs = 0
+		}
+		m.metrics.CurrentLogsIngested.WithLabelValues("memory").Set(float64(m.totalLogs))
+		if logsCount > 0 {
+			m.metrics.LogsFlushed.WithLabelValues("memory", "local").Add(float64(logsCount))
+		}
 	}()
 
 	return nil
@@ -351,9 +358,7 @@ func getAdjustedDuration() time.Duration {
 
 // LabelValues returns the unique label values from the local store. We will have chain of stores, so this will return the unique values from all the stores in the chain.
 func (m *MemoryStore) LabelValues(labels *Labels) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	m.mu.RLock()
 	*labels = emptyLabels()
 	maps.Copy(labels.Services, m.meta.Services)
 	maps.Copy(labels.Levels, m.meta.Levels)
@@ -361,6 +366,7 @@ func (m *MemoryStore) LabelValues(labels *Labels) error {
 		labels.CustomLabels[label] = make(map[string]int)
 		maps.Copy(labels.CustomLabels[label], values)
 	}
+	m.mu.RUnlock()
 
 	if localStore, ok := (*m.next).(*LocalStore); ok {
 		err := localStore.LabelValues(labels)

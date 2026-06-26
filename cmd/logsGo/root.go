@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,6 +36,10 @@ var rootCmd = &cobra.Command{
 		}
 
 		log.Println("Starting LogsGo ingestion service...")
+
+		// Enable contention profiles for /debug/pprof/mutex and /debug/pprof/block
+		runtime.SetMutexProfileFraction(5)
+		runtime.SetBlockProfileRate(1000)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

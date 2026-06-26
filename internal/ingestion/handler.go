@@ -15,6 +15,7 @@ import (
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
 	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/grpc"
@@ -27,6 +28,7 @@ type LogIngestorServer struct {
 	Store    store.Store // This is more of a linked list, this store is head which points to the next store, for now head is memory store
 	shutdown chan struct{}
 	cfg      GlobalConfig
+	metrics  *metrics.Metrics
 }
 
 type LogFilter struct {
@@ -55,6 +57,7 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory, me
 		cfg: GlobalConfig{
 			LookbackPeriod: int64(pkg.GetTimeDuration(factory.LookbackPeriod).Seconds()),
 		},
+		metrics: metrics,
 	}
 	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir).WithCompactL0OnClose(true).WithValueLogFileSize(16 << 20)
 	badgerOpts.Logger = nil
@@ -155,17 +158,26 @@ func (s *LogIngestorServer) UploadLogs(ctx context.Context, req *logapi.LogBatch
 }
 
 func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]logsgoql.Series, error) {
+	queryType := "instant"
+	if req.StartTs != req.EndTs {
+		queryType = "range"
+	}
+	timer := prometheus.NewTimer(s.metrics.QueryDuration.WithLabelValues(queryType))
+	defer timer.ObserveDuration()
+
 	s.cfg.QueryTime = time.Now().Unix()
 
 	lexer := logsgoql.NewLexer(req.Query)
 	parser := logsgoql.NewParser(lexer)
 	expr := parser.ParseExpression()
 	if len(parser.Errors()) > 0 {
+		s.metrics.QueryErrors.WithLabelValues("parse").Inc()
 		log.Printf("failed to parse query: %v", parser.Errors())
 		return nil, fmt.Errorf("failed to parse query: %v", parser.Errors())
 	}
 	plan, err := logsgoql.BuildPlan(expr)
 	if err != nil {
+		s.metrics.QueryErrors.WithLabelValues("plan").Inc()
 		log.Printf("failed to build query plan: %v", err)
 		return nil, fmt.Errorf("failed to build query plan: %v", err)
 	}
@@ -187,6 +199,7 @@ func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]logsgoql.Series, erro
 		executor := logsgoql.NewExecutor(logsgoql.NewEngine(s.Store), queryCtx)
 		series, err = executor.ExecuteQuery(plan)
 		if err != nil {
+			s.metrics.QueryErrors.WithLabelValues("execute").Inc()
 			log.Printf("failed to query logs: %v", err)
 			return nil, err
 		}
@@ -201,6 +214,7 @@ func (s *LogIngestorServer) MakeQuery(req QueryRequest) ([]logsgoql.Series, erro
 
 		series, err = executor.ExecuteRangeQuery(plan, req.Resolution)
 		if err != nil {
+			s.metrics.QueryErrors.WithLabelValues("execute").Inc()
 			log.Printf("failed to query logs: %v", err)
 			return nil, err
 		}

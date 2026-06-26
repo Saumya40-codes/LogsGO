@@ -25,7 +25,7 @@ import (
 // LocalStore implements the Store interface using an persistance kv badgerDB store
 type LocalStore struct {
 	db            *pkg.DB
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	stopOnce      sync.Once
 	maxTimeInDisk time.Duration // Maximum time in disk, after which logs are flushed to the next store
 	// lastFlushTime int64 // Timestamp of the last flush operation
@@ -36,6 +36,11 @@ type LocalStore struct {
 	index         *ShardedLogIndex // shared log index
 	dataDir       string           // Directory where the local store data is stored
 	metrics       *metrics.Metrics
+	// meta is an in-memory cache of meta.json so inserts don't re-read the file
+	// on every batch (hot path under load).
+	meta          Labels
+	metaLoaded    bool
+	currentLogs   int64
 }
 
 type localStoreValue struct {
@@ -51,7 +56,7 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 
 	lstore := &LocalStore{
 		db:            db,
-		mu:            sync.Mutex{},
+		mu:            sync.RWMutex{},
 		next:          next,
 		shutdown:      make(chan struct{}),
 		maxTimeInDisk: pkg.GetTimeDuration(maxTimeInDisk),
@@ -60,6 +65,7 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 		index:         index,
 		dataDir:       opts.Dir, // Store the directory where the local store data is stored
 		metrics:       metrics,
+		meta:          emptyLabels(),
 	}
 
 	// create a meta.json file to store all unique labels for this store
@@ -67,11 +73,32 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 	if err != nil {
 		return nil, fmt.Errorf("failed to create meta.json file: %w", err)
 	}
-	defer dir.Close()
-	// Initialize the meta labels
+	if err := parseLabelsFromFile(dir, &lstore.meta); err != nil {
+		dir.Close()
+		return nil, fmt.Errorf("failed to load meta labels: %w", err)
+	}
+	lstore.metaLoaded = true
+	dir.Close()
+	lstore.metrics.CurrentLogsIngested.WithLabelValues("local").Set(0)
 
 	go lstore.startFlushTimer()
 	return lstore, nil
+}
+
+func (l *LocalStore) ensureMetaLocked() error {
+	if l.metaLoaded {
+		return nil
+	}
+	file, err := getMetaFile(l.dataDir)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := parseLabelsFromFile(file, &l.meta); err != nil {
+		return err
+	}
+	l.metaLoaded = true
+	return nil
 }
 
 func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error {
@@ -81,21 +108,12 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 	timer := prometheus.NewTimer(l.metrics.IngestionDuration.WithLabelValues("local"))
 	defer timer.ObserveDuration()
 
-	// open meta.json file to store all unique labels for this store
 	if len(logs) == 0 {
 		return nil
 	}
 
-	file, err := getMetaFile(l.dataDir)
-	if err != nil {
-		return fmt.Errorf("failed to open required files in data dir: %w", err)
-	}
-	defer file.Close()
-
-	metaLabels := emptyLabels()
-
-	if err := parseLabelsFromFile(file, &metaLabels); err != nil {
-		return fmt.Errorf("failed to parse meta labels: %w", err)
+	if err := l.ensureMetaLocked(); err != nil {
+		return fmt.Errorf("failed to load meta labels: %w", err)
 	}
 
 	batch := l.db.Conn.NewWriteBatch()
@@ -126,35 +144,36 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 			return fmt.Errorf("failed to save  log to DB: %w", err)
 		}
 
-		incMetaLabels(&metaLabels, log.Service, log.Level, customLabels)
+		incMetaLabels(&l.meta, log.Service, log.Level, customLabels)
 	}
 
 	if err := batch.Flush(); err != nil {
 		return fmt.Errorf("failed to flush local insert batch: %w", err)
 	}
 
-	l.metrics.LogsIngested.WithLabelValues("local").Add(float64(len(logs)))
-	l.metrics.CurrentLogsIngested.WithLabelValues("local").Add(float64(len(logs)))
-
-	// Write the updated meta labels to the file
-	if err := writeLabelsToFile(file, metaLabels, l.dataDir); err != nil {
+	// Persist meta once per batch from the in-memory cache (avoids full re-read).
+	if err := writeLabelsToPath(l.meta, l.dataDir); err != nil {
 		return fmt.Errorf("failed to write meta labels to file: %w", err)
 	}
+
+	l.currentLogs += int64(len(logs))
+	l.metrics.LogsIngested.WithLabelValues("local").Add(float64(len(logs)))
+	l.metrics.CurrentLogsIngested.WithLabelValues("local").Set(float64(l.currentLogs))
 	return nil
 }
 
 func (l *LocalStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
 	return tieredSeries(queryCtx, plan, 0, l.next, func() ([]logsgoql.Series, error) {
-		l.mu.Lock()
-		defer l.mu.Unlock()
+		l.mu.RLock()
+		defer l.mu.RUnlock()
 		return l.getSeries(queryCtx, plan)
 	})
 }
 
 func (l *LocalStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error) {
 	return tieredSeries(queryCtx, plan, resolution, l.next, func() ([]logsgoql.Series, error) {
-		l.mu.Lock()
-		defer l.mu.Unlock()
+		l.mu.RLock()
+		defer l.mu.RUnlock()
 		return l.getSeries(queryCtx, plan)
 	})
 }
@@ -250,15 +269,8 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 	it := txn.NewIterator(badger.DefaultIteratorOptions)
 	defer it.Close()
 
-	file, err := getMetaFile(l.dataDir)
-	if err != nil {
-		return fmt.Errorf("failed to open meta file: %w", err)
-	}
-	defer file.Close()
-
-	metaLabels := emptyLabels()
-	if err := parseLabelsFromFile(file, &metaLabels); err != nil {
-		return fmt.Errorf("failed to parse meta labels: %w", err)
+	if err := l.ensureMetaLocked(); err != nil {
+		return fmt.Errorf("failed to load meta labels: %w", err)
 	}
 
 	// create a batch via new NewWriteBatch to delete the data in batch
@@ -311,7 +323,7 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 			log.Printf("failed to batch delete %s: %v", k, err)
 		}
 
-		decMetaLabels(&metaLabels, service, level, customLabels)
+		decMetaLabels(&l.meta, service, level, customLabels)
 	}
 
 	if l.next != nil {
@@ -321,7 +333,11 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 			}
 
 			l.metrics.LogsFlushed.WithLabelValues("local", "bucket").Add(float64(len(logs)))
-			l.metrics.CurrentLogsIngested.WithLabelValues("local").Add(-float64(len(logs))) // Decrease the current logs ingested count as they are flushed by len(logs) amount
+			l.currentLogs -= int64(len(logs))
+			if l.currentLogs < 0 {
+				l.currentLogs = 0
+			}
+			l.metrics.CurrentLogsIngested.WithLabelValues("local").Set(float64(l.currentLogs))
 
 			fmt.Printf("%d logs flushed to bucket store\n", len(logs))
 		}
@@ -331,7 +347,7 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 		return fmt.Errorf("failed to flush batched deletes: %w", err)
 	}
 
-	if err := writeLabelsToFile(file, metaLabels, l.dataDir); err != nil {
+	if err := writeLabelsToPath(l.meta, l.dataDir); err != nil {
 		return fmt.Errorf("failed to write meta labels: %w", err)
 	}
 
@@ -355,22 +371,9 @@ func (l *LocalStore) Close() error {
 
 // LabelValues returns the unique label values from the local store.
 func (l *LocalStore) LabelValues(labels *Labels) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	metaLabels := emptyLabels()
-	file, err := getMetaFile(l.dataDir)
-	if err != nil || file == nil {
-		return fmt.Errorf("failed to open meta.json file: %w", os.ErrNotExist)
-	}
-	defer file.Close()
-
-	err = parseLabelsFromFile(file, &metaLabels)
-	if err != nil {
-		return fmt.Errorf("failed to parse meta labels: %w", err)
-	}
-
-	mergeLabels(labels, &metaLabels)
+	l.mu.RLock()
+	mergeLabels(labels, &l.meta)
+	l.mu.RUnlock()
 
 	if l.next != nil {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
@@ -455,26 +458,42 @@ func parseLabelsFromFile(file *os.File, labels *Labels) error {
 	return nil
 }
 
-func writeLabelsToFile(file *os.File, labels Labels, dir string) error {
-	// peform atomic write to a temp file and then rename it to the original file
+func writeLabelsToPath(labels Labels, dir string) error {
+	// perform atomic write to a temp file and then rename it to meta.json
+	metaPath := fmt.Sprintf("%s/meta.json", dir)
 	tempFile, err := os.CreateTemp(dir, "meta_*.json")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file for meta labels: %w", err)
 	}
-	defer tempFile.Close()
+	tempName := tempFile.Name()
 	encoder := json.NewEncoder(tempFile)
 	if err := encoder.Encode(labels); err != nil {
+		tempFile.Close()
+		os.Remove(tempName)
 		return fmt.Errorf("failed to encode meta labels to temp file: %w", err)
 	}
 	if err := tempFile.Sync(); err != nil {
+		tempFile.Close()
+		os.Remove(tempName)
 		return fmt.Errorf("failed to sync temp file: %w", err)
 	}
 	if err := tempFile.Close(); err != nil {
+		os.Remove(tempName)
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
-	if err := os.Rename(tempFile.Name(), file.Name()); err != nil {
+	if err := os.Rename(tempName, metaPath); err != nil {
+		os.Remove(tempName)
 		return fmt.Errorf("failed to rename temp file to meta.json: %w", err)
+	}
+	return nil
+}
+
+func writeLabelsToFile(file *os.File, labels Labels, dir string) error {
+	// legacy helper kept for compatibility; prefers path-based atomic write
+	_ = file
+	if err := writeLabelsToPath(labels, dir); err != nil {
+		return err
 	}
 
 	dirHandle, err := os.Open(dir)

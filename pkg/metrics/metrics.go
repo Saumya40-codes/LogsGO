@@ -9,6 +9,8 @@ type Metrics struct {
 	CurrentLogsIngested *prometheus.GaugeVec
 	IngestionDuration   *prometheus.HistogramVec
 	FlushDuration       *prometheus.HistogramVec
+	QueryDuration       *prometheus.HistogramVec
+	QueryErrors         *prometheus.CounterVec
 }
 
 // NewMetrics initializes and returns a Metrics struct with the necessary Prometheus metrics.
@@ -33,34 +35,46 @@ func NewMetrics() *Metrics {
 		IngestionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:                           "ingestion_duration_seconds",
 			Help:                           "Duration of log ingestion in seconds",
-			NativeHistogramBucketFactor:    2,   // corresponds to ratio where schema will be 2^(2^0) = 2, for e.g., 1s, 2s, 4s, 8s, etc.
-			NativeHistogramMaxBucketNumber: 100, // after this,it will decrease the resolution, thus schema decreases (formula is 2^(2^(-schema)))
+			NativeHistogramBucketFactor:    2,
+			NativeHistogramMaxBucketNumber: 100,
 		}, []string{"store"}),
+		// Was incorrectly named ingestion_duration_seconds and never registered,
+		// so flush latency was invisible under load.
 		FlushDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:                           "ingestion_duration_seconds",
-			Help:                           "Duration of log ingestion in seconds",
+			Name:                           "flush_duration_seconds",
+			Help:                           "Duration of store flush operations in seconds",
 			NativeHistogramBucketFactor:    2,
 			NativeHistogramMaxBucketNumber: 100,
 		}, []string{"from", "to"}),
+		QueryDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:                           "query_duration_seconds",
+			Help:                           "Duration of log queries in seconds",
+			NativeHistogramBucketFactor:    2,
+			NativeHistogramMaxBucketNumber: 100,
+		}, []string{"type"}),
+		QueryErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "query_errors_total",
+			Help: "Total number of failed queries by reason",
+		}, []string{"reason"}),
 	}
 }
 
 // RegisterMetrics registers the metrics with Prometheus.
 func (m *Metrics) RegisterMetrics(reg *prometheus.Registry) error {
-	if err := reg.Register(m.LogsIngested); err != nil {
-		return err
+	collectors := []prometheus.Collector{
+		m.LogsIngested,
+		m.BucketCalls,
+		m.LogsFlushed,
+		m.CurrentLogsIngested,
+		m.IngestionDuration,
+		m.FlushDuration,
+		m.QueryDuration,
+		m.QueryErrors,
 	}
-	if err := reg.Register(m.BucketCalls); err != nil {
-		return err
-	}
-	if err := reg.Register(m.LogsFlushed); err != nil {
-		return err
-	}
-	if err := reg.Register(m.CurrentLogsIngested); err != nil {
-		return err
-	}
-	if err := reg.Register(m.IngestionDuration); err != nil {
-		return err
+	for _, c := range collectors {
+		if err := reg.Register(c); err != nil {
+			return err
+		}
 	}
 	return nil
 }
