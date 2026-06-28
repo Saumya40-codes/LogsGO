@@ -1,0 +1,99 @@
+{{ define "main" }}
+<section class="hero">
+  <div class="hero-inner">
+    <div>
+      <div class="hero-badge">Open source · Apache-2.0 · v{{ .Site.Params.version }}</div>
+      <h1>Log ingestion &amp; query built for retention</h1>
+      <p class="hero-lead">{{ .Site.Params.description }}</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="{{ "guides/getting-started/" | relURL }}">Get started</a>
+        <a class="btn btn-secondary" href="{{ "docs/architecture/" | relURL }}">Architecture</a>
+        <a class="btn btn-secondary" href="{{ .Site.Params.github }}" target="_blank" rel="noopener">View on GitHub</a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><strong>~70k/s</strong><span>Direct ingest</span></div>
+        <div class="stat"><strong>~2M/s</strong><span>Via queue</span></div>
+        <div class="stat"><strong>3 tiers</strong><span>Mem → local → S3</span></div>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <img src="{{ "images/logsGo_logo.png" | relURL }}" alt="LogsGo gopher mascot" width="340" height="340">
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="section-head">
+      <h2>Why LogsGo?</h2>
+      <p>A focused stack for push-based logs: fast write path, durable tiers, a purpose-built query language, and a dashboard you can run alongside the binary.</p>
+    </div>
+    <div class="feature-grid">
+      {{ range .Site.Params.features }}
+      <article class="feature-card">
+        <div class="feature-icon" aria-hidden="true">◆</div>
+        <h3>{{ .title }}</h3>
+        <p>{{ .description }}</p>
+      </article>
+      {{ end }}
+    </div>
+  </div>
+</section>
+
+<section class="section" style="padding-top:0">
+  <div class="section-inner arch-block">
+    <div>
+      <div class="section-head">
+        <h2>Architecture at a glance</h2>
+        <p>Logs land on gRPC, sit in an in-memory skiplist, then flush on time or size into BadgerDB and optionally S3-compatible storage. Queries walk the chain with deduplication.</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div>
+            <h3>Ingest</h3>
+            <p>gRPC <code>UploadLog</code> / <code>UploadLogs</code>, or publish batches to RabbitMQ for async workers.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Tiered retention</h3>
+            <p>Hot memory → warm local disk → cold object storage, each tier forwarding via <code>.next</code>.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Query</h3>
+            <p>LogsGoQL plans execute concurrently across stores; REST powers the embedded UI.</p>
+          </div>
+        </div>
+      </div>
+      <p style="margin-top:1.25rem"><a class="btn btn-secondary" href="{{ "docs/architecture/" | relURL }}">Read full architecture →</a></p>
+    </div>
+    <figure class="doc-figure">
+      <img src="{{ "images/archv1.png" | relURL }}" alt="LogsGo architecture diagram">
+      <figcaption>High-level architecture (from project docs)</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section" style="border-top:1px solid var(--border-soft); background: var(--bg-elevated);">
+  <div class="section-inner">
+    <div class="section-head">
+      <h2>Quick start</h2>
+      <p>Run the interactive stack from <code>examples/</code> or build from source.</p>
+    </div>
+    <pre><code># Clone and run the example stack
+git clone https://github.com/Saumya40-codes/LogsGO.git
+cd LogsGO/examples
+docker compose up
+
+# Dashboard: http://localhost:19091
+# REST API:  http://localhost:8080
+# gRPC:      localhost:50051</code></pre>
+    <div class="hero-actions" style="margin-top:1.25rem">
+      <a class="btn btn-primary" href="{{ "guides/getting-started/" | relURL }}">Full getting started guide</a>
+      <a class="btn btn-secondary" href="{{ "docs/benchmarks/" | relURL }}">See benchmarks</a>
+    </div>
+  </div>
+</section>
+{{ end }}

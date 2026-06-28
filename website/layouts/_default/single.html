@@ -1,0 +1,16 @@
+{{ define "main" }}
+<div class="page-wrap docs-layout">
+  {{ partial "docs-sidebar.html" . }}
+  <article class="docs-content">
+    <header>
+      <div class="breadcrumb"><a href="{{ "/" | relURL }}">Home</a> / {{ .Section | title }} / {{ .Title }}</div>
+      <h1>{{ .Title }}</h1>
+      {{ with .Description }}<p>{{ . }}</p>{{ end }}
+    </header>
+    <div class="content-body">
+      {{ .Content }}
+    </div>
+    {{ partial "page-nav.html" . }}
+  </article>
+</div>
+{{ end }}

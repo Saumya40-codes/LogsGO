@@ -1,0 +1,23 @@
+{{ define "main" }}
+<div class="page-wrap docs-layout">
+  {{ partial "docs-sidebar.html" . }}
+  <div class="docs-content">
+    <header>
+      <div class="breadcrumb"><a href="{{ "/" | relURL }}">Home</a> / {{ .Title }}</div>
+      <h1>{{ .Title }}</h1>
+      {{ with .Description }}<p>{{ . }}</p>{{ end }}
+    </header>
+    <div class="content-body">
+      {{ .Content }}
+    </div>
+    <div class="card-list" style="margin-top:1.5rem">
+      {{ range .Pages.ByWeight }}
+      <a href="{{ .RelPermalink }}">
+        <h3>{{ .Title }}</h3>
+        <p>{{ with .Description }}{{ . }}{{ else }}{{ .Summary | plainify | truncate 120 }}{{ end }}</p>
+      </a>
+      {{ end }}
+    </div>
+  </div>
+</div>
+{{ end }}

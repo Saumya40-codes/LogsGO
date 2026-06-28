@@ -1,0 +1,1 @@
+(function(){const e=document.querySelector(".nav-toggle"),t=document.querySelector(".nav-links");e&&t&&e.addEventListener("click",function(){t.classList.toggle("open");const n=t.classList.contains("open");e.setAttribute("aria-expanded",n?"true":"false")})})()

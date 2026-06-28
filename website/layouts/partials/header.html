@@ -1,0 +1,23 @@
+<header class="site-header">
+  <div class="nav-inner">
+    <a class="brand" href="{{ "/" | relURL }}">
+      <img src="{{ "images/logsGo_logo.png" | relURL }}" alt="LogsGo logo" width="36" height="36">
+      <span>LogsGo</span>
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false">Menu</button>
+    <nav class="nav-links" aria-label="Primary">
+      {{ $current := . }}
+      {{ range .Site.Menus.main }}
+        {{ $isExt := strings.HasPrefix .URL "http" }}
+        {{ $active := false }}
+        {{ if not $isExt }}
+          {{ $active = or ($current.IsMenuCurrent "main" .) ($current.HasMenuCurrent "main" .) }}
+          {{ if and (not $active) (hasPrefix $current.RelPermalink .URL) }}{{ $active = true }}{{ end }}
+        {{ end }}
+        <a href="{{ if $isExt }}{{ .URL }}{{ else }}{{ .URL | relURL }}{{ end }}"
+           class="{{ if $active }}active{{ end }}{{ if eq .Name "GitHub" }} nav-cta{{ end }}"
+           {{ if $isExt }}target="_blank" rel="noopener"{{ end }}>{{ .Name }}</a>
+      {{ end }}
+    </nav>
+  </div>
+</header>
