@@ -77,9 +77,9 @@ func main() {
     if err != nil {
         panic(err)
     }
-    defer c.Close() // if available on your client version
+    defer c.Close()
 
-    _ = c.UploadLog(&logclient.LogOpts{
+    _ = c.UploadLog(ctx, &logclient.LogOpts{
         Service:   "apsouth-1",
         Level:     "warn",
         Message:   "Disk usage high",
@@ -89,7 +89,7 @@ func main() {
 }
 ```
 
-Adjust method names to match the client API (`UploadLog` / batch helpers) in `client/go/logclient`.
+Use `UploadLogs` for batches and `UploadLogsToQueue` when the client is queue-configured (`client/go/logclient`).
 
 ## Query from the UI
 
