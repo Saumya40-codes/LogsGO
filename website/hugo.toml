@@ -1,0 +1,101 @@
+baseURL = "https://saumya40-codes.github.io/LogsGO/"
+languageCode = "en-us"
+title = "LogsGo"
+enableRobotsTXT = true
+enableGitInfo = false
+summaryLength = 30
+canonifyURLs = true
+
+[pagination]
+  pagerSize = 10
+
+[params]
+  description = "Standalone, scalable log ingestion and querying service designed for maximum retention. Multi-tiered stores, LogsGoQL, gRPC ingestion, and a built-in dashboard."
+  author = "Saumya Shah"
+  github = "https://github.com/Saumya40-codes/LogsGO"
+  logo = "images/logsGo_logo.png"
+  version = "0.2.0"
+
+  [[params.features]]
+    title = "gRPC Ingestion"
+    icon = "bolt"
+    description = "Push logs with a lightweight Go client over gRPC — single entries or batches."
+
+  [[params.features]]
+    title = "Multi-Tier Storage"
+    icon = "layers"
+    description = "Memory (skiplist) → BadgerDB local → S3-compatible cloud, chained with transparent fallback."
+
+  [[params.features]]
+    title = "LogsGoQL"
+    icon = "search"
+    description = "Custom query language with AND/OR, equality, and CONTAINS — instant and range queries."
+
+  [[params.features]]
+    title = "Web Dashboard"
+    icon = "monitor"
+    description = "Built-in UI to query and visualize logs with tables and range charts."
+
+  [[params.features]]
+    title = "Auth & TLS"
+    icon = "shield"
+    description = "Optional JWT on REST and gRPC, plus TLS termination via config files."
+
+  [[params.features]]
+    title = "Queue Ingest"
+    icon = "queue"
+    description = "Optional RabbitMQ path for high-throughput async ingestion with worker pools."
+
+  [[params.features]]
+    title = "Compaction"
+    icon = "compress"
+    description = "Compact object-store blocks on a schedule for faster deep queries."
+
+  [[params.features]]
+    title = "Helm Chart"
+    icon = "ship"
+    description = "Ship to Kubernetes with the included Helm chart and configurable ingress."
+
+[menu]
+  [[menu.main]]
+    name = "Docs"
+    url = "/docs/"
+    weight = 1
+  [[menu.main]]
+    name = "Getting Started"
+    url = "/guides/getting-started/"
+    weight = 2
+  [[menu.main]]
+    name = "API"
+    url = "/api/"
+    weight = 3
+  [[menu.main]]
+    name = "Deploy"
+    url = "/deployment/"
+    weight = 4
+  [[menu.main]]
+    name = "Benchmarks"
+    url = "/docs/benchmarks/"
+    weight = 5
+  [[menu.main]]
+    name = "GitHub"
+    url = "https://github.com/Saumya40-codes/LogsGO"
+    weight = 6
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+  [markup.highlight]
+    style = "github-dark"
+    lineNos = false
+    noClasses = false
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel = 3
+    ordered = false
+
+[outputs]
+  home = ["HTML", "RSS"]
+  section = ["HTML"]
+  page = ["HTML"]

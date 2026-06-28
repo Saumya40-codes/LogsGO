@@ -1,0 +1,31 @@
+<aside class="docs-sidebar" aria-label="Documentation navigation">
+  <h4>Start here</h4>
+  <ul>
+    <li><a href="{{ "docs/" | relURL }}" class="{{ if eq .RelPermalink "/docs/" }}active{{ end }}">Docs home</a></li>
+    <li><a href="{{ "guides/getting-started/" | relURL }}" class="{{ if in .RelPermalink "/guides/getting-started" }}active{{ end }}">Getting started</a></li>
+    <li><a href="{{ "guides/docker-example/" | relURL }}" class="{{ if in .RelPermalink "/guides/docker-example" }}active{{ end }}">Docker example</a></li>
+    <li><a href="{{ "guides/client-library/" | relURL }}" class="{{ if in .RelPermalink "/guides/client-library" }}active{{ end }}">Go client</a></li>
+  </ul>
+  <h4>Concepts</h4>
+  <ul>
+    <li><a href="{{ "docs/architecture/" | relURL }}" class="{{ if in .RelPermalink "/docs/architecture" }}active{{ end }}">Architecture</a></li>
+    <li><a href="{{ "docs/data-model/" | relURL }}" class="{{ if in .RelPermalink "/docs/data-model" }}active{{ end }}">Data model</a></li>
+    <li><a href="{{ "docs/storage/" | relURL }}" class="{{ if in .RelPermalink "/docs/storage" }}active{{ end }}">Storage tiers</a></li>
+    <li><a href="{{ "docs/query-language/" | relURL }}" class="{{ if in .RelPermalink "/docs/query-language" }}active{{ end }}">Query language</a></li>
+    <li><a href="{{ "docs/query-execution/" | relURL }}" class="{{ if in .RelPermalink "/docs/query-execution" }}active{{ end }}">Query execution</a></li>
+    <li><a href="{{ "docs/queueing/" | relURL }}" class="{{ if in .RelPermalink "/docs/queueing" }}active{{ end }}">Message queue</a></li>
+    <li><a href="{{ "docs/authentication/" | relURL }}" class="{{ if in .RelPermalink "/docs/authentication" }}active{{ end }}">Auth &amp; TLS</a></li>
+    <li><a href="{{ "docs/benchmarks/" | relURL }}" class="{{ if in .RelPermalink "/docs/benchmarks" }}active{{ end }}">Benchmarks</a></li>
+  </ul>
+  <h4>API &amp; ops</h4>
+  <ul>
+    <li><a href="{{ "api/" | relURL }}" class="{{ if eq .RelPermalink "/api/" }}active{{ end }}">API overview</a></li>
+    <li><a href="{{ "api/rest/" | relURL }}" class="{{ if in .RelPermalink "/api/rest" }}active{{ end }}">REST API</a></li>
+    <li><a href="{{ "api/grpc/" | relURL }}" class="{{ if in .RelPermalink "/api/grpc" }}active{{ end }}">gRPC API</a></li>
+    <li><a href="{{ "api/cli/" | relURL }}" class="{{ if in .RelPermalink "/api/cli" }}active{{ end }}">CLI flags</a></li>
+    <li><a href="{{ "deployment/" | relURL }}" class="{{ if eq .RelPermalink "/deployment/" }}active{{ end }}">Deployment</a></li>
+    <li><a href="{{ "deployment/docker/" | relURL }}" class="{{ if in .RelPermalink "/deployment/docker" }}active{{ end }}">Docker</a></li>
+    <li><a href="{{ "deployment/helm/" | relURL }}" class="{{ if in .RelPermalink "/deployment/helm" }}active{{ end }}">Helm / Kubernetes</a></li>
+    <li><a href="{{ "deployment/configuration/" | relURL }}" class="{{ if in .RelPermalink "/deployment/configuration" }}active{{ end }}">Configuration</a></li>
+  </ul>
+</aside>
