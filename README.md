@@ -5,6 +5,8 @@
 
 **LogsGo** is a standalone, scalable log ingestion and querying service designed for maximum log retention. It features a multi-tiered store architecture, pluggable backends, and a web-based dashboard. Logs are ingested via gRPC and flushed across configured stores based on a customizable time interval.
 
+**Documentation site:** [https://saumya40-codes.github.io/LogsGO/](https://saumya40-codes.github.io/LogsGO/) (Hugo, hosted on GitHub Pages — sources in [`website/`](website/))
+
 ---
 
 > Checkout [/docs](https://github.com/Saumya40-codes/LogsGO/tree/main/docs) to see the arch design, auth flows and several other brainstorming made for this project :)
