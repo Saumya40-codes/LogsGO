@@ -1,3 +1,4 @@
 ./cmd/logsGo/logsgo
 logsGo
 data/website/public/
+website/.hugo_build.lock
