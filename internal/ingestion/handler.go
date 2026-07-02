@@ -16,7 +16,6 @@ import (
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
-	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/grpc"
 )
 
@@ -56,10 +55,7 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory, me
 			LookbackPeriod: int64(pkg.GetTimeDuration(factory.LookbackPeriod).Seconds()),
 		},
 	}
-	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir).WithCompactL0OnClose(true).WithValueLogFileSize(16 << 20)
-	badgerOpts.Logger = nil
-
-	headStore := store.GetStoreChain(ctx, factory, badgerOpts, metrics)
+	headStore := store.GetStoreChain(ctx, factory, filepath.Join(factory.DataDir, "index"), metrics)
 	server.Store = headStore
 	return server
 }

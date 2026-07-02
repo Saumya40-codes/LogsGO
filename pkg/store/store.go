@@ -12,7 +12,6 @@ import (
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
-	"github.com/dgraph-io/badger/v4"
 )
 
 // Store interfaces defines the methods that any store implementation should provide.
@@ -50,7 +49,7 @@ type FlushConfig struct {
 	MaxLogsToFlush int64
 }
 
-func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpts badger.Options, metrics *metrics.Metrics) Store {
+func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, dataDir string, metrics *metrics.Metrics) Store {
 	shardIndex := NewShardedLogIndex()
 
 	// s3 store, if configured
@@ -72,9 +71,9 @@ func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, badgerOpt
 
 	var localStore *LocalStore
 	if nextStoreS3 != nil {
-		localStore, err = NewLocalStore(badgerOpts, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex, metrics)
+		localStore, err = NewLocalStore(dataDir, &nextStoreS3, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex, metrics)
 	} else {
-		localStore, err = NewLocalStore(badgerOpts, nil, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex, metrics)
+		localStore, err = NewLocalStore(dataDir, nil, factory.MaxRetentionTime, factory.FlushOnExit, shardIndex, metrics)
 	}
 	if err != nil {
 		log.Fatalf("failed to create local store: %v", err)
