@@ -20,7 +20,7 @@ LogsGo is designed as a **single binary** service with three main surfaces:
 
 1. **Clients** push logs with the Go `logclient` (or any gRPC client implementing the proto).
 2. The **ingestion server** accepts entries and writes them into the **in-memory store** (skiplist-backed for O(log n) insert and query).
-3. On **time** (`--max-time-in-mem`) and/or **count** (`--max-logs-in-mem`) thresholds, data is **flushed** to the **local BadgerDB** store.
+3. On **time** (`--max-time-in-mem`) and/or **count** (`--max-logs-in-mem`) thresholds, data is **flushed** to the **local [Pebble](https://github.com/cockroachdb/pebble)** store.
 4. If an S3-compatible **remote store** is configured, local blocks are further flushed to object storage for long retention.
 5. **Queries** start at the head of the chain and walk each store via `.next`, merging results with **deduplication** (parent tier preferred on conflicts).
 
@@ -29,7 +29,7 @@ LogsGo is designed as a **single binary** service with three main surfaces:
 Each store implements a common interface and optionally holds a pointer to the **next** tier. Flush and query operations are **transparent** along the chain:
 
 ```
-MemoryStore → LocalStore (BadgerDB) → BucketStore (S3 / MinIO)
+MemoryStore → LocalStore (Pebble) → BucketStore (S3 / MinIO)
 ```
 
 - **Memory**: fastest path for recent logs; bounded by retention flags.

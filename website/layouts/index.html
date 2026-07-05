@@ -45,7 +45,7 @@
     <div>
       <div class="section-head">
         <h2>Architecture at a glance</h2>
-        <p>Logs land on gRPC, sit in an in-memory skiplist, then flush on time or size into BadgerDB and optionally S3-compatible storage. Queries walk the chain with deduplication.</p>
+        <p>Logs land on gRPC, sit in an in-memory skiplist, then flush on time or size into Pebble and optionally S3-compatible storage. Queries walk the chain with deduplication.</p>
       </div>
       <div class="steps">
         <div class="step">

@@ -14,7 +14,6 @@ Binary entrypoint: `cmd/logsGo` (Cobra). Run `./logsGo --help` for the build you
 | `--max-retention-time` | `10d` | Max time block chunks remain on disk (`d`/`h`/`m`/`s`) |
 | `--max-time-in-mem` | `1h` | Time logs remain in memory before flush |
 | `--max-logs-in-mem` | `10000` | Max in-memory logs before flush |
-| `--unlock-data-dir` | `false` | Allow other processes on data dir (not recommended) |
 | `--flush-on-exit` | `false` | Flush to next store on any exit for stronger persistence |
 | `--store-config-path` | _empty_ | Path to S3-compatible store YAML |
 | `--store-config` | _empty_ | Inline store config (exclusive with path) |

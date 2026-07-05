@@ -9,7 +9,7 @@ LogsGo is a **standalone log ingestion and querying service** aimed at long rete
 ### What you can do
 
 - Ingest structured logs over **gRPC** (single or batch), optionally via **RabbitMQ**
-- Retain data across **memory → BadgerDB → S3-compatible** tiers
+- Retain data across **memory → Pebble → S3-compatible** tiers
 - Query with **LogsGoQL** (instant and range) from REST or the embedded dashboard
 - Harden with **JWT** and **TLS** when needed
 - Deploy with **Docker**, **docker compose** examples, or the **Helm** chart

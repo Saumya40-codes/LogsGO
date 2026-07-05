@@ -65,7 +65,7 @@ func NewMemoryStore(next *Store, maxTimeInMemory string, maxLogsInMem int64, flu
 	return mstore
 }
 
-func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]CounterValue) error {
+func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]CounterValue, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -197,7 +197,7 @@ func (m *MemoryStore) Flush(cfg FlushConfig) error {
 	}()
 
 	if localStore != nil {
-		if err := localStore.Insert(logsToBeFlushed, seriesToFlush); err != nil {
+		if err := localStore.Insert(logsToBeFlushed, seriesToFlush, ""); err != nil {
 			return fmt.Errorf("failed to insert logs into next store: %w", err)
 		}
 	}

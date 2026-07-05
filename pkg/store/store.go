@@ -16,7 +16,7 @@ import (
 
 // Store interfaces defines the methods that any store implementation should provide.
 type Store interface {
-	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error
+	Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue, flushID string) error
 	Flush(cfg FlushConfig) error
 	Close() error
 	LabelValues(labels *Labels) error // Returns all unique label values.
@@ -29,6 +29,8 @@ type Labels struct {
 	Services     map[string]int
 	Levels       map[string]int
 	CustomLabels map[string]map[string]int
+	// a crashed flush retried with the same id becomes a no-op
+	AppliedFlushes []string `json:",omitempty"`
 }
 
 // key used for mappings

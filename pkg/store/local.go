@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -72,11 +73,22 @@ func NewLocalStore(dataDir string, next *Store, maxTimeInDisk string, flushOnExi
 	defer dir.Close()
 	// Initialize the meta labels
 
+	marker, err := lstore.readFlushMarker()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read flush marker: %w", err)
+	}
+	if marker != nil {
+		if err := lstore.Flush(FlushConfig{}); err != nil {
+			return nil, fmt.Errorf("failed to recover crashed flush: %w", err)
+		}
+		lstore.lastFlushTime = time.Now().Unix()
+	}
+
 	go lstore.startFlushTimer()
 	return lstore, nil
 }
 
-func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error {
+func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue, flushID string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -241,6 +253,14 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 	var logs []*logapi.LogEntry
 	series := make(map[LogKey]map[int64]CounterValue)
 
+	marker, err := l.readFlushMarker()
+	if err != nil {
+		return fmt.Errorf("failed to read flush marker: %w", err)
+	}
+	if marker != nil {
+		cutoff = marker.Cutoff
+	}
+
 	flushLower := localStoreSeekKey(0)
 	flushUpper := localStoreUpperBound(cutoff)
 
@@ -303,9 +323,22 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 		decMetaLabels(&metaLabels, service, level, customLabels)
 	}
 
-	if l.next != nil {
+	if l.next != nil && visited {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			if err := bucketStore.Insert(logs, series); err != nil {
+			flushID := ""
+			if marker != nil {
+				flushID = marker.FlushID
+			} else {
+				flushID, err = newFlushID()
+				if err != nil {
+					return fmt.Errorf("failed to generate flush id: %w", err)
+				}
+				if err := l.writeFlushMarker(flushMarker{FlushID: flushID, Cutoff: cutoff}); err != nil {
+					return fmt.Errorf("failed to write flush marker: %w", err)
+				}
+			}
+
+			if err := bucketStore.Insert(logs, series, flushID); err != nil {
 				return err
 			}
 
@@ -316,9 +349,17 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 		}
 	}
 
-	if visited {
-		if err := l.db.Conn.DeleteRange(flushLower, flushUpper, pebble.Sync); err != nil {
+	if visited || marker != nil {
+		batch := l.db.Conn.NewBatch()
+		defer batch.Close()
+		if err := batch.DeleteRange(flushLower, flushUpper, nil); err != nil {
 			return fmt.Errorf("failed to delete flushed range: %w", err)
+		}
+		if err := batch.Delete(flushMarkerKey, nil); err != nil {
+			return fmt.Errorf("failed to delete flush marker: %w", err)
+		}
+		if err := batch.Commit(pebble.Sync); err != nil {
+			return fmt.Errorf("failed to commit flush deletes: %w", err)
 		}
 	}
 
@@ -375,6 +416,7 @@ func (l *LocalStore) LabelValues(labels *Labels) error {
 }
 
 func (l *LocalStore) startFlushTimer() {
+
 	ticker := time.NewTicker(l.maxTimeInDisk)
 	defer ticker.Stop()
 
@@ -480,8 +522,6 @@ func writeLabelsToFile(file *os.File, labels Labels, dir string) error {
 	return nil
 }
 
-// keys are a fixed 8-byte big-endian timestamp followed by pipe-separated fields,
-// so byte-ordered iteration is time-ordered and range bounds are cheap to build
 func buildLocalStoreKey(timestamp int64, level, service, message string, labels map[string]string) []byte {
 	encodedMessage := EncodeMessage(message)
 	encodedLabels := encodeLabels(labels)
@@ -502,12 +542,51 @@ func localStoreSeekKey(timestamp int64) []byte {
 	return key
 }
 
-// exclusive upper bound covering every key at the given timestamp
 func localStoreUpperBound(timestamp int64) []byte {
 	if timestamp == math.MaxInt64 {
 		return bytes.Repeat([]byte{0xff}, 9)
 	}
 	return localStoreSeekKey(timestamp + 1)
+}
+
+var flushMarkerKey = append([]byte{0xff}, "flush-intent"...)
+
+type flushMarker struct {
+	FlushID string `json:"flush_id"`
+	Cutoff  int64  `json:"cutoff"`
+}
+
+func newFlushID() (string, error) {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), buf), nil
+}
+
+func (l *LocalStore) readFlushMarker() (*flushMarker, error) {
+	val, closer, err := l.db.Conn.Get(flushMarkerKey)
+	if err != nil {
+		if errors.Is(err, pebble.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer closer.Close()
+
+	var marker flushMarker
+	if err := json.Unmarshal(val, &marker); err != nil {
+		return nil, err
+	}
+	return &marker, nil
+}
+
+func (l *LocalStore) writeFlushMarker(marker flushMarker) error {
+	data, err := json.Marshal(marker)
+	if err != nil {
+		return err
+	}
+	return l.db.Conn.Set(flushMarkerKey, data, pebble.Sync)
 }
 
 func parseLocalStoreKey(key []byte) (timestamp int64, level, service, message string, labels map[string]string, ok bool) {
@@ -554,4 +633,3 @@ func unmarshalLocalStoreValue(data []byte) (localStoreValue, error) {
 	value.Count = countVal
 	return value, nil
 }
-

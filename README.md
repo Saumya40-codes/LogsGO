@@ -5,8 +5,6 @@
 
 **LogsGo** is a standalone, scalable log ingestion and querying service designed for maximum log retention. It features a multi-tiered store architecture, pluggable backends, and a web-based dashboard. Logs are ingested via gRPC and flushed across configured stores based on a customizable time interval.
 
-**Documentation site:** [https://saumya40-codes.github.io/LogsGO/](https://saumya40-codes.github.io/LogsGO/) (Hugo, hosted on GitHub Pages — sources in [`website/`](website/))
-
 ---
 
 > Checkout [/docs](https://github.com/Saumya40-codes/LogsGO/tree/main/docs) to see the arch design, auth flows and several other brainstorming made for this project :)
@@ -17,7 +15,7 @@
 -  **Push-based log ingestion** using a lightweight gRPC client.
 -  **Multi-tiered store architecture**:
     - **In-memory store** → for fast ingestion and short-term access, uses Skiplist as a underneath store for fast (O(logn)) based insertion and faster querying (O(logn))
-    - **Local store** → persistent storage by [BadgerDB](https://github.com/dgraph-io/badger).
+    - **Local store** → persistent storage by [Pebble](https://github.com/cockroachdb/pebble).
     - **Cloud store** → support for S3-compatible services like AWS S3 or MinIO.
 -  **Chained store design**: Each store passes query and flush operations to its `.next` store for transparent fallbacks and deep queries.
 -  **Custom query language**: Enables querying logs with `AND`/`OR` operators. Example:
@@ -68,7 +66,7 @@
 1. Logs are received via the gRPC client.
 2. They are stored first in an in-memory buffer.
 3. At regular intervals, logs are flushed to:
- - Local store (BadgerDB)
+ - Local store (Pebble)
  - Then to S3-compatible object store (e.g., AWS S3, MinIO)
 4. Queries traverse through each store using a `.next` store in chain until results are found.
 

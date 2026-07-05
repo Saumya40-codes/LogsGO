@@ -7,7 +7,6 @@ import (
 	"github.com/cockroachdb/pebble/v2"
 )
 
-// NoopLogger silences pebble's info logs while keeping errors visible
 type NoopLogger struct{}
 
 func (NoopLogger) Infof(format string, args ...interface{}) {}

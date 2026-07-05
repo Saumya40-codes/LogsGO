@@ -41,6 +41,8 @@ type Config struct {
 	RemoteStore BucketStoreConfig `yaml:"remote_store"`
 }
 
+const maxAppliedFlushIDs = 100
+
 type BucketStore struct {
 	client  *minio.Client
 	mu      sync.Mutex
@@ -148,7 +150,7 @@ func (b *BucketStore) InitClient() error {
 	return nil
 }
 
-func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error {
+func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue, flushID string) error {
 	// now here have a dedicated file kinda thing for each entry won't make sense.
 	// we will create a chunks of 2h worth of data
 
@@ -183,6 +185,11 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	metaData, err := b.GetMetaData()
 	if err != nil {
 		return fmt.Errorf("failed to get metadata: %w", err)
+	}
+
+	if flushID != "" && slices.Contains(metaData.AppliedFlushes, flushID) {
+		log.Printf("flush %s already applied to bucket, skipping", flushID)
+		return nil
 	}
 
 	for _, log := range logs {
@@ -221,16 +228,21 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 		batches.Entries = append(batches.Entries, s)
 	}
 
-	// Update metadata
-	if err := b.UpdateMetaData(metaData); err != nil {
-		return fmt.Errorf("failed to update metadata: %w", err)
-	}
-
 	// Upload last batch if exists
 	if len(batches.Entries) > 0 {
 		if err := b.uploadLogsToStorage(batches, key); err != nil {
 			return err
 		}
+	}
+
+	if flushID != "" {
+		metaData.AppliedFlushes = append(metaData.AppliedFlushes, flushID)
+		if len(metaData.AppliedFlushes) > maxAppliedFlushIDs {
+			metaData.AppliedFlushes = metaData.AppliedFlushes[len(metaData.AppliedFlushes)-maxAppliedFlushIDs:]
+		}
+	}
+	if err := b.UpdateMetaData(metaData); err != nil {
+		return fmt.Errorf("failed to update metadata: %w", err)
 	}
 
 	b.metrics.LogsIngested.WithLabelValues("bucket").Add(float64(len(logs)))
