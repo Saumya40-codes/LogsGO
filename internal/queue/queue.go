@@ -66,7 +66,7 @@ func StartWorker(ctx context.Context, qConfig pkg.QueueConfig, store store.Store
 				continue
 			}
 
-			if err := store.Insert(batch.Entries, nil); err != nil {
+			if err := store.Insert(batch.Entries, nil, ""); err != nil {
 				log.Printf("Failed to insert logs into store: %v", err)
 			} else {
 				log.Printf("Inserted %d logs from queue", len(batch.Entries))

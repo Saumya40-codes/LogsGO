@@ -65,4 +65,4 @@ See `examples/tls-config.yaml` for cert and key path fields. Enable with:
 5. Configure remote store for long retention  
 6. Restrict REST/pprof and metrics to private networks  
 7. Use queue workers sized to CPU and AMQP throughput  
-8. Schedule backups of Badger data and/or bucket lifecycle policies  
+8. Schedule backups of Pebble data and/or bucket lifecycle policies  

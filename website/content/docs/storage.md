@@ -1,6 +1,6 @@
 ---
 title: Storage tiers
-description: Memory skiplist, BadgerDB local store, and S3-compatible bucket store.
+description: Memory skiplist, Pebble local store, and S3-compatible bucket store.
 weight: 30
 ---
 
@@ -14,11 +14,10 @@ LogsGo keeps writes simple and retention multi-tiered. Each tier optimizes for a
   - `--max-time-in-mem` (default `1h`)
   - `--max-logs-in-mem` (default `10000`)
 
-## 2. Local store (BadgerDB)
+## 2. Local store ([Pebble](https://github.com/cockroachdb/pebble))
 
 - Persistent **on-disk** store under `--data-dir` (default `./data`).
 - Receives flushed memory segments.
-- Use `--unlock-data-dir` only if you understand multi-process access risks (not recommended for production).
 
 ## 3. Cloud / bucket store
 

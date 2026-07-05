@@ -16,7 +16,6 @@ import (
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
 	"github.com/Saumya40-codes/LogsGO/pkg/store"
-	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/grpc"
 )
 
@@ -56,10 +55,7 @@ func NewLogIngestorServer(ctx context.Context, factory *pkg.IngestionFactory, me
 			LookbackPeriod: int64(pkg.GetTimeDuration(factory.LookbackPeriod).Seconds()),
 		},
 	}
-	badgerOpts := badger.DefaultOptions(filepath.Join(factory.DataDir, "index")).WithBypassLockGuard(factory.UnLockDataDir).WithCompactL0OnClose(true).WithValueLogFileSize(16 << 20)
-	badgerOpts.Logger = nil
-
-	headStore := store.GetStoreChain(ctx, factory, badgerOpts, metrics)
+	headStore := store.GetStoreChain(ctx, factory, filepath.Join(factory.DataDir, "index"), metrics)
 	server.Store = headStore
 	return server
 }
@@ -138,7 +134,7 @@ func (s *LogIngestorServer) UploadLog(ctx context.Context, req *logapi.LogEntry)
 	if req == nil {
 		return nil, nil // Not a best way to handle this, but we will do it for now
 	}
-	if err := s.Store.Insert([]*logapi.LogEntry{req}, nil); err != nil {
+	if err := s.Store.Insert([]*logapi.LogEntry{req}, nil, ""); err != nil {
 		return &logapi.UploadResponse{Success: false}, err
 	}
 	return &logapi.UploadResponse{Success: true}, nil
@@ -148,7 +144,7 @@ func (s *LogIngestorServer) UploadLogs(ctx context.Context, req *logapi.LogBatch
 	if req == nil {
 		return nil, nil // Not a best way to handle this, but we will do it for now
 	}
-	if err := s.Store.Insert(req.Entries, nil); err != nil {
+	if err := s.Store.Insert(req.Entries, nil, ""); err != nil {
 		return &logapi.UploadResponse{Success: false}, err
 	}
 	return &logapi.UploadResponse{Success: true}, nil

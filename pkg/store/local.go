@@ -1,12 +1,15 @@
 package store
 
 import (
+	"bytes"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -18,11 +21,11 @@ import (
 	"github.com/Saumya40-codes/LogsGO/pkg"
 	"github.com/Saumya40-codes/LogsGO/pkg/logsgoql"
 	"github.com/Saumya40-codes/LogsGO/pkg/metrics"
-	"github.com/dgraph-io/badger/v4"
+	"github.com/cockroachdb/pebble/v2"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// LocalStore implements the Store interface using an persistance kv badgerDB store
+// LocalStore implements the Store interface using a persistent pebble kv store
 type LocalStore struct {
 	db            *pkg.DB
 	mu            sync.Mutex
@@ -43,8 +46,8 @@ type localStoreValue struct {
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
-func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) (*LocalStore, error) {
-	db, err := pkg.OpenDB(opts)
+func NewLocalStore(dataDir string, next *Store, maxTimeInDisk string, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) (*LocalStore, error) {
+	db, err := pkg.OpenDB(dataDir, &pebble.Options{Logger: pkg.NoopLogger{}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open local store: %w", err)
 	}
@@ -58,23 +61,34 @@ func NewLocalStore(opts badger.Options, next *Store, maxTimeInDisk string, flush
 		flushOnExit:   flushOnExit,
 		lastFlushTime: 0,
 		index:         index,
-		dataDir:       opts.Dir, // Store the directory where the local store data is stored
+		dataDir:       dataDir,
 		metrics:       metrics,
 	}
 
 	// create a meta.json file to store all unique labels for this store
-	dir, err := os.OpenFile(fmt.Sprintf("%s/meta.json", opts.Dir), os.O_RDWR|os.O_CREATE, 0644)
+	dir, err := os.OpenFile(fmt.Sprintf("%s/meta.json", dataDir), os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create meta.json file: %w", err)
 	}
 	defer dir.Close()
 	// Initialize the meta labels
 
+	marker, err := lstore.readFlushMarker()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read flush marker: %w", err)
+	}
+	if marker != nil {
+		if err := lstore.Flush(FlushConfig{}); err != nil {
+			return nil, fmt.Errorf("failed to recover crashed flush: %w", err)
+		}
+		lstore.lastFlushTime = time.Now().Unix()
+	}
+
 	go lstore.startFlushTimer()
 	return lstore, nil
 }
 
-func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue) error {
+func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue, flushID string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -98,8 +112,8 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 		return fmt.Errorf("failed to parse meta labels: %w", err)
 	}
 
-	batch := l.db.Conn.NewWriteBatch()
-	defer batch.Cancel()
+	batch := l.db.Conn.NewBatch()
+	defer batch.Close()
 
 	for _, log := range logs {
 		customLabels := normalizeCustomLabels(log.Labels)
@@ -122,15 +136,15 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 		if err != nil {
 			return err
 		}
-		if err := batch.Set([]byte(key), valueBytes); err != nil {
-			return fmt.Errorf("failed to save  log to DB: %w", err)
+		if err := batch.Set(key, valueBytes, nil); err != nil {
+			return fmt.Errorf("failed to save log to DB: %w", err)
 		}
 
 		incMetaLabels(&metaLabels, log.Service, log.Level, customLabels)
 	}
 
-	if err := batch.Flush(); err != nil {
-		return fmt.Errorf("failed to flush local insert batch: %w", err)
+	if err := batch.Commit(pebble.Sync); err != nil {
+		return fmt.Errorf("failed to commit local insert batch: %w", err)
 	}
 
 	l.metrics.LogsIngested.WithLabelValues("local").Add(float64(len(logs)))
@@ -164,31 +178,26 @@ func (l *LocalStore) getSeries(queryCtx logsgoql.QueryContext, plan *logsgoql.Pl
 
 	seriesByKey := make(map[LogKey][]logsgoql.Sample)
 
-	txn := l.db.Conn.NewTransaction(false)
-	defer txn.Discard()
-
-	opts := badger.DefaultIteratorOptions
-	opts.PrefetchValues = true
-	it := txn.NewIterator(opts)
+	it, err := l.db.Conn.NewIter(&pebble.IterOptions{
+		LowerBound: localStoreSeekKey(iterStart),
+		UpperBound: localStoreUpperBound(iterEnd),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create iterator: %w", err)
+	}
 	defer it.Close()
 
-	for it.Seek([]byte(localStoreSeekKey(iterStart))); it.Valid(); it.Next() {
-		item := it.Item()
-		k := string(item.Key())
-
-		ts, level, service, message, keyLabels, ok := parseLocalStoreKey(k)
+	for it.First(); it.Valid(); it.Next() {
+		ts, level, service, message, keyLabels, ok := parseLocalStoreKey(it.Key())
 		if !ok {
 			continue
 		}
-		if ts > iterEnd {
-			break
-		}
 
-		valCopy, err := item.ValueCopy(nil)
+		val, err := it.ValueAndErr()
 		if err != nil {
 			continue
 		}
-		stored, err := unmarshalLocalStoreValue(valCopy)
+		stored, err := unmarshalLocalStoreValue(val)
 		if err != nil {
 			continue
 		}
@@ -233,21 +242,35 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.db == nil || l.db.Conn == nil || l.db.Conn.IsClosed() {
+	if l.db == nil || l.db.Conn == nil || l.db.IsClosed() {
 		return nil
 	}
 	timer := prometheus.NewTimer(l.metrics.FlushDuration.WithLabelValues("local", "bucket"))
 	defer timer.ObserveDuration()
 
 	now := time.Now().Unix()
+	cutoff := now - int64(l.maxTimeInDisk.Seconds())
 	var logs []*logapi.LogEntry
 	series := make(map[LogKey]map[int64]CounterValue)
 
-	// creating a r-only transac
-	txn := l.db.Conn.NewTransaction(false)
-	defer txn.Discard()
+	marker, err := l.readFlushMarker()
+	if err != nil {
+		return fmt.Errorf("failed to read flush marker: %w", err)
+	}
+	if marker != nil {
+		cutoff = marker.Cutoff
+	}
 
-	it := txn.NewIterator(badger.DefaultIteratorOptions)
+	flushLower := localStoreSeekKey(0)
+	flushUpper := localStoreUpperBound(cutoff)
+
+	it, err := l.db.Conn.NewIter(&pebble.IterOptions{
+		LowerBound: flushLower,
+		UpperBound: flushUpper,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create iterator: %w", err)
+	}
 	defer it.Close()
 
 	file, err := getMetaFile(l.dataDir)
@@ -261,29 +284,20 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 		return fmt.Errorf("failed to parse meta labels: %w", err)
 	}
 
-	// create a batch via new NewWriteBatch to delete the data in batch
-	batch := l.db.Conn.NewWriteBatch()
-	defer batch.Cancel()
-
-	for it.Seek([]byte(localStoreSeekKey(0))); it.Valid(); it.Next() {
-		item := it.Item()
-		k := string(item.Key())
-
-		timestamp, level, service, message, keyLabels, ok := parseLocalStoreKey(k)
+	visited := false
+	for it.First(); it.Valid(); it.Next() {
+		visited = true
+		timestamp, level, service, message, keyLabels, ok := parseLocalStoreKey(it.Key())
 		if !ok {
 			continue
 		}
 
-		if now-timestamp < int64(l.maxTimeInDisk.Seconds()) {
-			continue
-		}
-
-		valCopy, err := item.ValueCopy(nil)
+		val, err := it.ValueAndErr()
 		if err != nil {
 			continue
 		}
 
-		stored, err := unmarshalLocalStoreValue(valCopy)
+		stored, err := unmarshalLocalStoreValue(val)
 		if err != nil {
 			continue
 		}
@@ -306,17 +320,25 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 			Labels:    cloneLabels(customLabels),
 		})
 
-		err = batch.Delete(item.KeyCopy(nil))
-		if err != nil {
-			log.Printf("failed to batch delete %s: %v", k, err)
-		}
-
 		decMetaLabels(&metaLabels, service, level, customLabels)
 	}
 
-	if l.next != nil {
+	if l.next != nil && visited {
 		if bucketStore, ok := (*l.next).(*BucketStore); ok {
-			if err := bucketStore.Insert(logs, series); err != nil {
+			flushID := ""
+			if marker != nil {
+				flushID = marker.FlushID
+			} else {
+				flushID, err = newFlushID()
+				if err != nil {
+					return fmt.Errorf("failed to generate flush id: %w", err)
+				}
+				if err := l.writeFlushMarker(flushMarker{FlushID: flushID, Cutoff: cutoff}); err != nil {
+					return fmt.Errorf("failed to write flush marker: %w", err)
+				}
+			}
+
+			if err := bucketStore.Insert(logs, series, flushID); err != nil {
 				return err
 			}
 
@@ -327,15 +349,24 @@ func (l *LocalStore) Flush(cfg FlushConfig) error {
 		}
 	}
 
-	if err := batch.Flush(); err != nil {
-		return fmt.Errorf("failed to flush batched deletes: %w", err)
+	if visited || marker != nil {
+		batch := l.db.Conn.NewBatch()
+		defer batch.Close()
+		if err := batch.DeleteRange(flushLower, flushUpper, nil); err != nil {
+			return fmt.Errorf("failed to delete flushed range: %w", err)
+		}
+		if err := batch.Delete(flushMarkerKey, nil); err != nil {
+			return fmt.Errorf("failed to delete flush marker: %w", err)
+		}
+		if err := batch.Commit(pebble.Sync); err != nil {
+			return fmt.Errorf("failed to commit flush deletes: %w", err)
+		}
 	}
 
 	if err := writeLabelsToFile(file, metaLabels, l.dataDir); err != nil {
 		return fmt.Errorf("failed to write meta labels: %w", err)
 	}
 
-	l.db.RunGC()
 	return nil
 }
 
@@ -347,8 +378,8 @@ func (l *LocalStore) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.db != nil && l.db.Conn != nil && !l.db.Conn.IsClosed() {
-		l.db.CloseDB()
+	if l.db != nil && l.db.Conn != nil && !l.db.IsClosed() {
+		return l.db.CloseDB()
 	}
 	return nil
 }
@@ -385,6 +416,7 @@ func (l *LocalStore) LabelValues(labels *Labels) error {
 }
 
 func (l *LocalStore) startFlushTimer() {
+
 	ticker := time.NewTicker(l.maxTimeInDisk)
 	defer ticker.Stop()
 
@@ -490,39 +522,93 @@ func writeLabelsToFile(file *os.File, labels Labels, dir string) error {
 	return nil
 }
 
-func buildLocalStoreKey(timestamp int64, level, service, message string, labels map[string]string) string {
+func buildLocalStoreKey(timestamp int64, level, service, message string, labels map[string]string) []byte {
 	encodedMessage := EncodeMessage(message)
 	encodedLabels := encodeLabels(labels)
-	if encodedLabels == "" {
-		return fmt.Sprintf("%020d|%s|%s|%s", timestamp, level, service, encodedMessage)
+
+	rest := level + "|" + service + "|" + encodedMessage
+	if encodedLabels != "" {
+		rest += "|" + encodedLabels
 	}
-	return fmt.Sprintf("%020d|%s|%s|%s|%s", timestamp, level, service, encodedMessage, encodedLabels)
+
+	key := make([]byte, 8, 8+len(rest))
+	binary.BigEndian.PutUint64(key, uint64(timestamp))
+	return append(key, rest...)
 }
 
-func localStoreSeekKey(timestamp int64) string {
-	return fmt.Sprintf("%020d|", timestamp)
+func localStoreSeekKey(timestamp int64) []byte {
+	key := make([]byte, 8)
+	binary.BigEndian.PutUint64(key, uint64(timestamp))
+	return key
 }
 
-func parseLocalStoreKey(key string) (timestamp int64, level, service, message string, labels map[string]string, ok bool) {
-	parts := strings.SplitN(key, "|", 5)
-	if len(parts) != 4 && len(parts) != 5 {
+func localStoreUpperBound(timestamp int64) []byte {
+	if timestamp == math.MaxInt64 {
+		return bytes.Repeat([]byte{0xff}, 9)
+	}
+	return localStoreSeekKey(timestamp + 1)
+}
+
+var flushMarkerKey = append([]byte{0xff}, "flush-intent"...)
+
+type flushMarker struct {
+	FlushID string `json:"flush_id"`
+	Cutoff  int64  `json:"cutoff"`
+}
+
+func newFlushID() (string, error) {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), buf), nil
+}
+
+func (l *LocalStore) readFlushMarker() (*flushMarker, error) {
+	val, closer, err := l.db.Conn.Get(flushMarkerKey)
+	if err != nil {
+		if errors.Is(err, pebble.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer closer.Close()
+
+	var marker flushMarker
+	if err := json.Unmarshal(val, &marker); err != nil {
+		return nil, err
+	}
+	return &marker, nil
+}
+
+func (l *LocalStore) writeFlushMarker(marker flushMarker) error {
+	data, err := json.Marshal(marker)
+	if err != nil {
+		return err
+	}
+	return l.db.Conn.Set(flushMarkerKey, data, pebble.Sync)
+}
+
+func parseLocalStoreKey(key []byte) (timestamp int64, level, service, message string, labels map[string]string, ok bool) {
+	if len(key) <= 8 {
 		return 0, "", "", "", nil, false
 	}
 
-	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	ts := int64(binary.BigEndian.Uint64(key[:8]))
+	parts := strings.SplitN(string(key[8:]), "|", 4)
+	if len(parts) != 3 && len(parts) != 4 {
+		return 0, "", "", "", nil, false
+	}
+
+	msg, err := DecodeMessage(parts[2])
 	if err != nil {
 		return 0, "", "", "", nil, false
 	}
 
-	msg, err := DecodeMessage(parts[3])
-	if err != nil {
-		return 0, "", "", "", nil, false
+	if len(parts) == 4 {
+		labels = decodeLabels(parts[3])
 	}
-
-	if len(parts) == 5 {
-		labels = decodeLabels(parts[4])
-	}
-	return ts, parts[1], parts[2], msg, labels, true
+	return ts, parts[0], parts[1], msg, labels, true
 }
 
 func marshalLocalStoreValue(value localStoreValue) ([]byte, error) {
@@ -547,11 +633,3 @@ func unmarshalLocalStoreValue(data []byte) (localStoreValue, error) {
 	value.Count = countVal
 	return value, nil
 }
-
-// Insert -> key -> fmt.Sprintf("%d|%s|%s", entry.Timestamp, entry.Level, entry.Service) TODO think about how to parse message efficiently
-// we should have db instance, ideally during startup
-// Flush each upstream store flushes to downstream after specified time interval, i.e. memory.Flush should flush to local.Flush, local.Flush should flush to remote.Flush
-// Flush in itself should call Insert for each log entry, so that we can persist it to the db.
-// Close close the db
-
-// for graph view (a range query) for a query, a query should return a list of logs with timestamp, level, service, message and count
