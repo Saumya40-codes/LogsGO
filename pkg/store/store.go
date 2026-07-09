@@ -82,8 +82,13 @@ func GetStoreChain(ctx context.Context, factory *pkg.IngestionFactory, dataDir s
 	}
 	var nextStore Store = localStore
 
-	// memory store
-	memStore := NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.MaxLogsInMem, factory.FlushOnExit, shardIndex, metrics) // internally creates a goroutine to flush logs periodically
+	policy, err := LoadCachePolicy(factory.CacheConfigPath, factory.CacheConfig)
+	if err != nil {
+		log.Fatalf("failed to load cache policy: %v", err)
+	}
+
+	// memory store acts as a write-through cache in front of the durable store
+	memStore := NewMemoryStore(&nextStore, factory.MaxTimeInMem, factory.MaxLogsInMem, policy, shardIndex, metrics)
 	var headStore Store = memStore
 
 	return headStore

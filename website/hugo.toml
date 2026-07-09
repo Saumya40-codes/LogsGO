@@ -24,7 +24,7 @@ canonifyURLs = true
   [[params.features]]
     title = "Multi-Tier Storage"
     icon = "layers"
-    description = "Memory (skiplist) → Pebble local → S3-compatible cloud, chained with transparent fallback."
+    description = "Write-through memory cache → Pebble local → S3-compatible cloud, chained with transparent fallback."
 
   [[params.features]]
     title = "LogsGoQL"

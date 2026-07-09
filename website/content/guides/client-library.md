@@ -62,4 +62,4 @@ Generate stubs with `make proto` if you change `api/grpc/proto/logs.proto`.
 
 ## Errors and retries
 
-Handle gRPC errors from the client; for queue mode, also handle AMQP publish failures. Prefer **batches** for throughput; tune batch size against memory flush thresholds on the server.
+Handle gRPC errors from the client; for queue mode, also handle AMQP publish failures. Prefer **batches** for throughput — each batch is persisted to the local store in a single write on the server.

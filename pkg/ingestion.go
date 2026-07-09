@@ -26,6 +26,8 @@ type IngestionFactory struct {
 	QueueConfigPath         string
 	CompactDuration         string // we keep this for tests, ideally it will run every 12h though the flag still exists
 	CompactConfig           string // helper for tests and can default can be changed via hidden flag
+	CacheConfigPath         string
+	CacheConfig             string
 }
 
 type QueueConfig struct {

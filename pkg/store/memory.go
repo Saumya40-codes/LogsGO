@@ -2,12 +2,9 @@ package store
 
 import (
 	"fmt"
-	"log"
 	"maps"
 	"math"
-	"math/rand"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"
@@ -18,92 +15,124 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// MemoryStore implements the Store interface using an in-memory map.
+const defaultEvictionInterval = time.Minute
+
+// MemoryStore is a write-through, policy-driven read cache. Every log is
+// forwarded to the next (durable) store; only logs matching the cache policy
+// are additionally retained here to accelerate hot queries.
 type MemoryStore struct {
-	mu              sync.Mutex
-	stopOnce        sync.Once
-	next            *Store        // Next store in the chain, if any
-	maxTimeInMemory time.Duration // Maximum time in memory, after which logs are flushed to the next store
-	maxLogsInMem    int64         // Maximum number of logs in memory before flushing to the next store
-	backoff         int32
-	maxLogReached   chan struct{}
-	shutdown        chan struct{} // Channel to signal shutdown of the store
-	flushOnExit     bool
-	skipList        *internal.SkipList
-	series          map[LogKey]map[int64]CounterValue
-	index           *ShardedLogIndex // shared log index
-	meta            Labels           // contains all unique labels for this store, this is used to get unique label values
-	metrics         *metrics.Metrics
-	totalLogs       int64
-	done            chan struct{}
+	mu         sync.Mutex
+	stopOnce   sync.Once
+	next       *Store
+	ttl        time.Duration
+	maxEntries int64
+	policy     *CachePolicy
+	shutdown   chan struct{}
+	skipList   *internal.SkipList
+	series     map[LogKey]map[int64]CounterValue
+	index      *ShardedLogIndex
+	meta       Labels
+	metrics    *metrics.Metrics
+	totalLogs  int64
+	done       chan struct{}
 }
 
-func NewMemoryStore(next *Store, maxTimeInMemory string, maxLogsInMem int64, flushOnExit bool, index *ShardedLogIndex, metrics *metrics.Metrics) *MemoryStore {
+func NewMemoryStore(next *Store, maxTimeInMemory string, maxLogsInMem int64, policy *CachePolicy, index *ShardedLogIndex, metrics *metrics.Metrics) *MemoryStore {
+	ttl := pkg.GetTimeDuration(maxTimeInMemory)
+	maxEntries := maxLogsInMem
+	if policy != nil {
+		if policy.ttl > 0 {
+			ttl = policy.ttl
+		}
+		if policy.maxEntries > 0 {
+			maxEntries = policy.maxEntries
+		}
+	}
+
 	mstore := &MemoryStore{
-		mu:              sync.Mutex{},
-		next:            next,
-		maxTimeInMemory: pkg.GetTimeDuration(maxTimeInMemory),
-		maxLogsInMem:    maxLogsInMem,
-		backoff:         getInitialBackoff(maxLogsInMem),
-		maxLogReached:   make(chan struct{}, 1),
-		shutdown:        make(chan struct{}),
-		flushOnExit:     flushOnExit,
-		series:          make(map[LogKey]map[int64]CounterValue),
-		index:           index,
-		meta:            emptyLabels(),
-		metrics:         metrics,
-		totalLogs:       0,
-		done:            make(chan struct{}, 2),
+		next:       next,
+		ttl:        ttl,
+		maxEntries: maxEntries,
+		policy:     policy,
+		shutdown:   make(chan struct{}),
+		series:     make(map[LogKey]map[int64]CounterValue),
+		index:      index,
+		meta:       emptyLabels(),
+		metrics:    metrics,
+		done:       make(chan struct{}, 1),
 	}
 
 	mstore.skipList = internal.NewSkipList()
 
-	go mstore.startFlushTimer()
-	if mstore.maxLogsInMem > 0 {
-		go mstore.startBackoffResetTimer()
-	}
+	go mstore.startEvictionTimer()
 	return mstore
 }
 
 func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]CounterValue, _ string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	timer := prometheus.NewTimer(m.metrics.IngestionDuration.WithLabelValues("memory"))
-	defer timer.ObserveDuration()
+
+	fullSeries := make(map[LogKey]map[int64]CounterValue, len(logs))
+	toCache := make([]*logapi.LogEntry, 0, len(logs))
 
 	for _, lg := range logs {
 		customLabels := normalizeCustomLabels(lg.Labels)
 		key := LogKey{Service: lg.Service, Message: lg.Message, Level: lg.Level, CustomLabels: labelsFingerprint(customLabels)}
 		ts := lg.Timestamp
+
 		m.index.Inc(key)
-		shardedSeries := m.index.getShard(key)
+		cv := *m.index.getShard(key).data[key]
+		if fullSeries[key] == nil {
+			fullSeries[key] = make(map[int64]CounterValue)
+		}
+		fullSeries[key][ts] = cv
+
+		if m.policy.ShouldCache(logsgoql.EntryLabels{Service: lg.Service, Level: lg.Level, Message: lg.Message, Labels: customLabels}) {
+			toCache = append(toCache, lg)
+		}
+	}
+
+	floor := m.oldestKeyLocked()
+	enforceFloor := m.totalLogs > 0
+	for _, lg := range toCache {
+		ts := lg.Timestamp
+		if enforceFloor && ts < floor {
+			continue // below the covered window; pebble still has it
+		}
+		customLabels := normalizeCustomLabels(lg.Labels)
+		key := LogKey{Service: lg.Service, Message: lg.Message, Level: lg.Level, CustomLabels: labelsFingerprint(customLabels)}
 		if m.series[key] == nil {
 			m.series[key] = make(map[int64]CounterValue)
 		}
-		newCounterVal := shardedSeries.data[key]
-		m.series[key][ts] = *newCounterVal
-
+		m.series[key][ts] = fullSeries[key][ts]
 		m.skipList.Insert(ts, internal.Value{Service: lg.Service, Level: lg.Level, Message: lg.Message, Labels: cloneLabels(customLabels)})
-
 		incMetaLabels(&m.meta, lg.Service, lg.Level, customLabels)
+		m.totalLogs++
 	}
 
-	m.totalLogs += int64(len(logs))
+	if m.maxEntries > 0 {
+		m.evictOverflowLocked()
+	}
 
-	if m.totalLogs > m.maxLogsInMem {
-		select {
-		case m.maxLogReached <- struct{}{}:
-		default:
+	m.metrics.LogsIngested.WithLabelValues("memory").Add(float64(len(toCache)))
+	timer.ObserveDuration()
+	m.mu.Unlock()
+
+	if m.next != nil && len(logs) > 0 {
+		if err := (*m.next).Insert(logs, fullSeries, ""); err != nil {
+			return fmt.Errorf("failed to insert logs into next store: %w", err)
 		}
 	}
-
-	m.metrics.LogsIngested.WithLabelValues("memory").Add(float64(len(logs)))
 	return nil
 }
 
 func (m *MemoryStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
-	return tieredSeries(queryCtx, plan, 0, m.next, func() ([]logsgoql.Series, error) {
+	next := m.next
+	if m.covers(queryCtx, plan) {
+		next = nil
+	}
+	return tieredSeries(queryCtx, plan, 0, next, func() ([]logsgoql.Series, error) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return m.getSeries(queryCtx, plan)
@@ -111,139 +140,98 @@ func (m *MemoryStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan
 }
 
 func (m *MemoryStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error) {
-	return tieredSeries(queryCtx, plan, resolution, m.next, func() ([]logsgoql.Series, error) {
+	next := m.next
+	if m.covers(queryCtx, plan) {
+		next = nil
+	}
+	return tieredSeries(queryCtx, plan, resolution, next, func() ([]logsgoql.Series, error) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return m.getSeries(queryCtx, plan)
 	})
 }
 
-func (m *MemoryStore) Flush(cfg FlushConfig) error {
-	var logsToBeFlushed []*logapi.LogEntry
-	seriesToFlush := make(map[LogKey]map[int64]CounterValue)
-	var logsCount int64
-	var localStore *LocalStore
-
-	func() {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-
-		currT := time.Now().Unix()
-		maxThreshold := currT - int64(m.maxTimeInMemory.Seconds())
-
-		timer := prometheus.NewTimer(m.metrics.FlushDuration.WithLabelValues("memory", "local"))
-		defer timer.ObserveDuration()
-		// YOLO
-		if maxThreshold < 0 {
-			return
-		}
-
-		if cfg.endTs == 0 {
-			cfg.endTs = maxThreshold
-		}
-
-		if m.next != nil {
-			if nextStore, ok := (*m.next).(*LocalStore); ok {
-				localStore = nextStore
-			} else {
-				log.Println("next store is not a LocalStore, cannot insert logs")
-				return
-			}
-		}
-
-		iter := m.skipList.Seek(internal.IteratorSearchOpts{
-			Start: cfg.startTs,
-			End:   cfg.endTs,
-		})
-
-		for {
-			node, ok := iter.Next()
-			if !ok {
-				break
-			}
-			ts := node.GetKey()
-			logs := node.GetValues()
-
-			logsCount += int64(len(logs))
-
-			for _, log := range logs {
-				entry := &logapi.LogEntry{
-					Service:   log.Service,
-					Level:     log.Level,
-					Message:   log.Message,
-					Timestamp: ts,
-					Labels:    cloneLabels(log.Labels),
-				}
-				logsToBeFlushed = append(logsToBeFlushed, entry)
-
-				logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message, CustomLabels: labelsFingerprint(log.Labels)}
-				logSeries, ok := m.series[logKey]
-				if !ok {
-					return
-				}
-				counterVal, ok := logSeries[ts]
-				if !ok {
-					return
-				}
-				if seriesToFlush[logKey] == nil {
-					seriesToFlush[logKey] = make(map[int64]CounterValue)
-				}
-				seriesToFlush[logKey][ts] = counterVal
-			}
-			if logsCount >= cfg.MaxLogsToFlush && cfg.MaxLogsToFlush > 0 {
-				break
-			}
-		}
-	}()
-
-	if localStore != nil {
-		if err := localStore.Insert(logsToBeFlushed, seriesToFlush, ""); err != nil {
-			return fmt.Errorf("failed to insert logs into next store: %w", err)
-		}
+// covers reports whether the cache alone can answer the query, letting us skip
+// the durable tier. It requires both a policy that subsumes the query and a
+// retained window that spans the query's start.
+func (m *MemoryStore) covers(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) bool {
+	if !m.policy.Covers(plan) {
+		return false
 	}
+	start, _ := seriesIterWindow(queryCtx)
 
-	func() {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-
-		for logKey, samples := range seriesToFlush {
-			logSeries, ok := m.series[logKey]
-			if !ok {
-				return
-			}
-			for ts := range samples {
-				if _, ok := logSeries[ts]; !ok {
-					return
-				}
-				delete(logSeries, ts)
-			}
-			if len(logSeries) == 0 {
-				delete(m.series, logKey)
-			}
-		}
-
-		for _, log := range logsToBeFlushed {
-			decMetaLabels(&m.meta, log.Service, log.Level, log.Labels)
-		}
-
-		for ts := range collectFlushedTimestamps(seriesToFlush) {
-			m.skipList.Delete(ts)
-		}
-
-		m.totalLogs -= logsCount
-	}()
-
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.totalLogs == 0 {
+		return false
+	}
+	return start >= m.oldestKeyLocked()
 }
 
-func collectFlushedTimestamps(series map[LogKey]map[int64]CounterValue) map[int64]struct{} {
-	timestamps := make(map[int64]struct{})
-	for _, samples := range series {
-		for ts := range samples {
-			timestamps[ts] = struct{}{}
-		}
+func (m *MemoryStore) oldestKeyLocked() int64 {
+	node, ok := m.skipList.Seek(internal.IteratorSearchOpts{Start: 0}).Next()
+	if !ok {
+		return math.MaxInt64
 	}
-	return timestamps
+	return node.GetKey()
+}
+
+func (m *MemoryStore) evictOverflowLocked() {
+	for m.totalLogs > m.maxEntries {
+		node, ok := m.skipList.Seek(internal.IteratorSearchOpts{Start: 0}).Next()
+		if !ok {
+			return
+		}
+		m.evictTimestampLocked(node.GetKey(), node.GetValues())
+	}
+}
+
+func (m *MemoryStore) evictTimestampLocked(ts int64, values []internal.Value) {
+	for _, v := range values {
+		customLabels := normalizeCustomLabels(v.Labels)
+		key := LogKey{Service: v.Service, Level: v.Level, Message: v.Message, CustomLabels: labelsFingerprint(customLabels)}
+		if samples, ok := m.series[key]; ok {
+			delete(samples, ts)
+			if len(samples) == 0 {
+				delete(m.series, key)
+			}
+		}
+		decMetaLabels(&m.meta, v.Service, v.Level, customLabels)
+		m.totalLogs--
+	}
+	m.skipList.Delete(ts)
+}
+
+func (m *MemoryStore) evictExpired() {
+	if m.ttl <= 0 {
+		return
+	}
+	cutoff := time.Now().Unix() - int64(m.ttl.Seconds())
+	if cutoff <= 0 {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	it := m.skipList.Seek(internal.IteratorSearchOpts{Start: 0, End: cutoff})
+	var expired []*internal.Node
+	for {
+		node, ok := it.Next()
+		if !ok {
+			break
+		}
+		expired = append(expired, node)
+	}
+	for _, node := range expired {
+		m.evictTimestampLocked(node.GetKey(), node.GetValues())
+	}
+}
+
+// Flush is a no-op: the cache never flushes downward since every log is already
+// written through to the durable store on insert. It exists to satisfy Store.
+func (m *MemoryStore) Flush(_ FlushConfig) error {
+	return nil
 }
 
 func (m *MemoryStore) Close() error {
@@ -251,19 +239,15 @@ func (m *MemoryStore) Close() error {
 		close(m.shutdown)
 	})
 
-	// wait for flush timers to return
-	for i := 0; i < 2; i++ {
-		<-m.done
-	}
+	<-m.done
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	m.series = make(map[LogKey]map[int64]CounterValue)
 	m.skipList = internal.NewSkipList()
 	m.meta = emptyLabels()
+	m.totalLogs = 0
+	m.mu.Unlock()
 
-	// Close the next store if it exists
 	if m.next != nil {
 		if localStore, ok := (*m.next).(*LocalStore); ok {
 			if err := localStore.Close(); err != nil {
@@ -277,8 +261,12 @@ func (m *MemoryStore) Close() error {
 	return nil
 }
 
-func (m *MemoryStore) startFlushTimer() {
-	ticker := time.NewTicker(m.maxTimeInMemory)
+func (m *MemoryStore) startEvictionTimer() {
+	interval := m.ttl
+	if interval <= 0 || interval > defaultEvictionInterval {
+		interval = defaultEvictionInterval
+	}
+	ticker := time.NewTicker(interval)
 	defer func() {
 		ticker.Stop()
 		m.done <- struct{}{}
@@ -287,73 +275,17 @@ func (m *MemoryStore) startFlushTimer() {
 	for {
 		select {
 		case <-ticker.C:
-			m.Flush(
-				FlushConfig{
-					startTs:        0,
-					endTs:          0,
-					MaxLogsToFlush: 0,
-				},
-			)
+			m.evictExpired()
 		case <-m.shutdown:
-			if m.flushOnExit {
-				m.Flush(
-					FlushConfig{
-						startTs:        0,
-						endTs:          0,
-						MaxLogsToFlush: 0,
-					},
-				)
-			}
 			return
 		}
 	}
 }
 
-func (m *MemoryStore) startBackoffResetTimer() {
-	timer := time.NewTimer(getAdjustedDuration())
-	defer func() {
-		timer.Stop()
-		m.done <- struct{}{}
-	}()
-
-	for {
-		select {
-		case <-timer.C:
-			m.backoff = getInitialBackoff(m.maxLogsInMem)
-			timer.Reset(getAdjustedDuration())
-		case <-m.shutdown:
-			timer.Stop()
-			return
-		case <-m.maxLogReached:
-			if !timer.Stop() {
-				<-timer.C // concurrent firing case, drain this value
-			}
-			timer.Reset(getAdjustedDuration())
-			m.Flush(
-				FlushConfig{
-					startTs:        0,
-					endTs:          math.MaxInt64,
-					MaxLogsToFlush: 1 << (m.backoff + 1),
-				},
-			)
-			atomic.AddInt32(&m.backoff, 1)
-		}
-	}
-}
-
-func getInitialBackoff(maxLogsInMem int64) int32 {
-	return int32(math.Log2(float64((maxLogsInMem + 4 - 1) / 4)))
-}
-
-func getAdjustedDuration() time.Duration {
-	return 30*time.Minute + time.Duration(rand.Intn(20))*time.Minute
-}
-
-// LabelValues returns the unique label values from the local store. We will have chain of stores, so this will return the unique values from all the stores in the chain.
+// LabelValues returns the unique label values from this store's cache merged
+// with the durable stores below it.
 func (m *MemoryStore) LabelValues(labels *Labels) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	*labels = emptyLabels()
 	maps.Copy(labels.Services, m.meta.Services)
 	maps.Copy(labels.Levels, m.meta.Levels)
@@ -361,11 +293,13 @@ func (m *MemoryStore) LabelValues(labels *Labels) error {
 		labels.CustomLabels[label] = make(map[string]int)
 		maps.Copy(labels.CustomLabels[label], values)
 	}
+	m.mu.Unlock()
 
-	if localStore, ok := (*m.next).(*LocalStore); ok {
-		err := localStore.LabelValues(labels)
-		if err != nil {
-			return fmt.Errorf("failed to get label values from local store: %w", err)
+	if m.next != nil {
+		if localStore, ok := (*m.next).(*LocalStore); ok {
+			if err := localStore.LabelValues(labels); err != nil {
+				return fmt.Errorf("failed to get label values from local store: %w", err)
+			}
 		}
 	}
 

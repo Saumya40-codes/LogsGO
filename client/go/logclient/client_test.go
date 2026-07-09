@@ -63,6 +63,23 @@ func cleanupFactory() {
 	factory.StoreConfig = ""
 	factory.StoreConfigPath = ""
 	factory.MaxRetentionTime = "10d"
+	factory.CacheConfig = ""
+	factory.CacheConfigPath = ""
+}
+
+// cacheConfigYAML builds an inline cache policy for tests.
+func cacheConfigYAML(enabled bool, rules ...string) string {
+	type wrap struct {
+		Cache store.CacheConfig `yaml:"cache"`
+	}
+	b, err := yaml.Marshal(wrap{Cache: store.CacheConfig{
+		Enabled: enabled,
+		Rules:   rules,
+	}})
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
 }
 
 type expectedLog struct {
@@ -734,4 +751,153 @@ func TestCompactionIndex(t *testing.T) {
 	testutil.Ok(t, err)
 
 	testutil.Assert(t, len(idx.Entries) > 0, "Expected at least one index entry, got 0")
+}
+
+// TestCachePolicyWriteThrough verifies that with a selective cache policy only
+// matching logs are retained in the memory cache, but every log is still
+// written through to the durable store and remains fully queryable.
+func TestCachePolicyWriteThrough(t *testing.T) {
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
+	// Cache only level=error; info/warn must still be durable and queryable.
+	fctry.CacheConfig = cacheConfigYAML(true, `level=error`)
+
+	ctx := t.Context()
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
+
+	time.Sleep(2 * time.Second)
+
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
+	testutil.Ok(t, err)
+
+	errorLog := &LogOpts{
+		Message: "payment failed",
+		Level:   "error",
+		Service: "payments",
+		Labels:  map[string]string{"component": "checkout"},
+	}
+	infoLog := &LogOpts{
+		Message: "request ok",
+		Level:   "info",
+		Service: "payments",
+		Labels:  map[string]string{"component": "checkout"},
+	}
+	warnLog := &LogOpts{
+		Message: "slow query",
+		Level:   "warn",
+		Service: "api",
+		Labels:  map[string]string{"component": "db"},
+	}
+
+	testutil.Ok(t, lc.UploadLog(ctx, errorLog), "failed to upload error log")
+	testutil.Ok(t, lc.UploadLog(ctx, infoLog), "failed to upload info log")
+	testutil.Ok(t, lc.UploadLog(ctx, warnLog), "failed to upload warn log")
+
+	time.Sleep(2 * time.Second)
+
+	// Policy-matched series is queryable (served from cache when covered).
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="error"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "error", Service: "payments", Message: "payment failed", Labels: map[string]string{"component": "checkout"}, Count: 1},
+	})
+
+	// Non-cached series still resolved via the durable tier (write-through).
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="info"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "info", Service: "payments", Message: "request ok", Labels: map[string]string{"component": "checkout"}, Count: 1},
+	})
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="warn"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "warn", Service: "api", Message: "slow query", Labels: map[string]string{"component": "db"}, Count: 1},
+	})
+
+	// Service-wide query merges cache + durable results.
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=service="payments"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "error", Service: "payments", Message: "payment failed", Labels: map[string]string{"component": "checkout"}, Count: 1},
+		{Level: "info", Service: "payments", Message: "request ok", Labels: map[string]string{"component": "checkout"}, Count: 1},
+	})
+
+	// Label values span both cached and non-cached series.
+	resp, err := http.Get("http://localhost:8080/api/v1/labels")
+	testutil.Ok(t, err, "Failed to get label values from REST API")
+	defer resp.Body.Close()
+	testutil.Assert(t, resp.StatusCode == http.StatusOK, "Expected status code 200 OK, got %d", resp.StatusCode)
+
+	var labels rest.LabelValuesResponse
+	testutil.Ok(t, json.NewDecoder(resp.Body).Decode(&labels), "Failed to decode label values")
+	AssertLabels(t, labels,
+		[]string{"payments", "api"},
+		[]string{"error", "info", "warn"},
+		map[string][]string{"component": {"checkout", "db"}},
+	)
+}
+
+// TestCachePolicyMultiRule verifies OR-combined cache rules (same shape as
+// examples/cache-config.yaml) keep all matched logs queryable while unmatched
+// ones still come from the durable store.
+func TestCachePolicyMultiRule(t *testing.T) {
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
+	fctry.CacheConfig = cacheConfigYAML(true, `level=error|level=warn`, `service=payments`)
+
+	ctx := t.Context()
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
+
+	time.Sleep(2 * time.Second)
+
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
+	testutil.Ok(t, err)
+
+	// Matched by level rule
+	testutil.Ok(t, lc.UploadLog(ctx, &LogOpts{Message: "boom", Level: "error", Service: "auth"}))
+	// Matched by service rule (info is not a level rule hit, but service=payments is)
+	testutil.Ok(t, lc.UploadLog(ctx, &LogOpts{Message: "charged", Level: "info", Service: "payments"}))
+	// Unmatched by either rule — durable only
+	testutil.Ok(t, lc.UploadLog(ctx, &LogOpts{Message: "ok", Level: "info", Service: "auth"}))
+
+	time.Sleep(2 * time.Second)
+
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="error"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "error", Service: "auth", Message: "boom", Count: 1},
+	})
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=service="payments"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "info", Service: "payments", Message: "charged", Count: 1},
+	})
+	// Unmatched still durable + queryable
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=service="auth"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "error", Service: "auth", Message: "boom", Count: 1},
+		{Level: "info", Service: "auth", Message: "ok", Count: 1},
+	})
+}
+
+// TestCachePolicyDisabled ensures a disabled policy caches nothing but still
+// write-throughs every log so queries keep working.
+func TestCachePolicyDisabled(t *testing.T) {
+	fctry := GetNewDefaultFactory()
+	fctry.DataDir = t.TempDir()
+	fctry.CacheConfig = cacheConfigYAML(false, `level=error`)
+
+	ctx := t.Context()
+	serv := ingestion.NewLogIngestorServer(ctx, fctry, metricsObj)
+	go ingestion.StartServer(ctx, serv, fctry.GrpcListenAddr, authConfig, nil)
+	go rest.StartServer(ctx, serv, fctry, authConfig, reg)
+
+	time.Sleep(2 * time.Second)
+
+	lc, err := NewLogClient(ctx, fctry.GrpcListenAddr)
+	testutil.Ok(t, err)
+
+	testutil.Ok(t, lc.UploadLog(ctx, &LogOpts{
+		Message: "still durable",
+		Level:   "error",
+		Service: "svc",
+		Labels:  map[string]string{"component": "api"},
+	}))
+
+	time.Sleep(2 * time.Second)
+
+	verifyLogs(t, `http://localhost:8080/api/v1/query?expression=level="error"&start=0&end=0&resolution=0s`, []expectedLog{
+		{Level: "error", Service: "svc", Message: "still durable", Labels: map[string]string{"component": "api"}, Count: 1},
+	})
 }

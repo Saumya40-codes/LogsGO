@@ -20,6 +20,26 @@ remote_store:
 ./logsGo --store-config-path=store_config.yaml
 ```
 
+## Cache policy (`cache-config.yaml`)
+
+All logs are always persisted durably to Pebble. This policy only decides which logs are *additionally* kept in the in-memory cache to speed up hot queries. Rules use the same query language as reads ([LogsGoQL]({{% ref "/docs/query-language" %}})); a log is cached if it matches **any** rule.
+
+```yaml
+cache:
+  enabled: true
+  ttl: 1h              # evict cached logs older than this
+  max_entries: 100000  # cap on cached logs; oldest are evicted first
+  rules:
+    - 'level=error|level=warn'
+    - 'service=payments'
+```
+
+```bash
+./logsGo --cache-config-path=cache-config.yaml
+```
+
+A query is served from the cache alone (skipping Pebble) only when its predicate is fully covered by the policy rules **and** its time window falls within the retained set; otherwise it transparently falls back to the durable tier. Omit the flag to disable caching entirely — every query is then served from Pebble.
+
 ## Queue (`queue-config.yaml`)
 
 ```yaml
