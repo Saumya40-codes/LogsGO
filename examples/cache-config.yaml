@@ -1,0 +1,9 @@
+# Memory cache policy.
+# Rules use the same query language as reads.
+cache:
+  enabled: true
+  ttl: 1h              # evict cached logs older than this
+  max_entries: 100000  # cap on cached logs; oldest are evicted first
+  rules:
+    - 'level=error|level=warn'
+    - 'service=payments'

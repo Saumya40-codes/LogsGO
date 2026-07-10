@@ -3,7 +3,7 @@
   <img src="docs/logsGo_logo.png" alt="LogsGo Gopher" width="300"/>
 </p>
 
-**LogsGo** is a standalone, scalable log ingestion and querying service designed for maximum log retention. It features a multi-tiered store architecture, pluggable backends, and a web-based dashboard. Logs are ingested via gRPC and flushed across configured stores based on a customizable time interval.
+**LogsGo** is a standalone, scalable log ingestion and querying service designed for maximum log retention. It features a multi-tiered store architecture, pluggable backends, and a web-based dashboard. Logs are ingested via gRPC, persisted durably to a local store, and tiered out to cloud storage on a customizable interval, with a configurable in-memory cache in front for hot queries.
 
 ---
 
@@ -14,9 +14,10 @@
 
 -  **Push-based log ingestion** using a lightweight gRPC client.
 -  **Multi-tiered store architecture**:
-    - **In-memory store** → for fast ingestion and short-term access, uses Skiplist as a underneath store for fast (O(logn)) based insertion and faster querying (O(logn))
-    - **Local store** → persistent storage by [Pebble](https://github.com/cockroachdb/pebble).
+    - **In-memory cache** → a write-through, policy-driven cache (Skiplist, O(logn) insert/query) that retains only the logs you mark as hot for low-latency queries.
+    - **Local store** → durable source of truth for every log, persisted by [Pebble](https://github.com/cockroachdb/pebble).
     - **Cloud store** → support for S3-compatible services like AWS S3 or MinIO.
+-  **Policy-driven caching**: Define which logs stay hot in memory via a YAML cache policy (`--cache-config-path`) using the same query language as reads; everything is still persisted durably to Pebble. See [`examples/cache-config.yaml`](examples/cache-config.yaml).
 -  **Chained store design**: Each store passes query and flush operations to its `.next` store for transparent fallbacks and deep queries.
 -  **Custom query language**: Enables querying logs with `AND`/`OR` operators. Example:
   
@@ -64,11 +65,9 @@
 ![Architecture Diagram](docs/archv1.png)
 
 1. Logs are received via the gRPC client.
-2. They are stored first in an in-memory buffer.
-3. At regular intervals, logs are flushed to:
- - Local store (Pebble)
- - Then to S3-compatible object store (e.g., AWS S3, MinIO)
-4. Queries traverse through each store using a `.next` store in chain until results are found.
+2. Every log is written through to the local store (Pebble) for durability; logs matching the cache policy are also kept in the in-memory cache.
+3. At regular intervals, local blocks are flushed to an S3-compatible object store (e.g., AWS S3, MinIO).
+4. Queries are served from the in-memory cache when it fully covers the request; otherwise they traverse each store via `.next` and merge results.
 
 ---
 ## DataModel Overview

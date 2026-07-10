@@ -19,21 +19,21 @@ LogsGo is designed as a **single binary** service with three main surfaces:
 *Architecture overview from the repository docs*
 
 1. **Clients** push logs with the Go `logclient` (or any gRPC client implementing the proto).
-2. The **ingestion server** accepts entries and writes them into the **in-memory store** (skiplist-backed for O(log n) insert and query).
-3. On **time** (`--max-time-in-mem`) and/or **count** (`--max-logs-in-mem`) thresholds, data is **flushed** to the **local [Pebble](https://github.com/cockroachdb/pebble)** store.
+2. The **ingestion server** accepts entries at the head of the chain — the **in-memory store**, which now behaves as a **write-through cache**.
+3. Every log is **written through to the local [Pebble](https://github.com/cockroachdb/pebble) store** for durability. In addition, logs matching the **cache policy** (`--cache-config-path`) are retained in the skiplist-backed cache for low-latency hot queries. Logs that match no rule live only in Pebble.
 4. If an S3-compatible **remote store** is configured, local blocks are further flushed to object storage for long retention.
-5. **Queries** start at the head of the chain and walk each store via `.next`, merging results with **deduplication** (parent tier preferred on conflicts).
+5. **Queries** start at the head of the chain. When the request is fully covered by the cache, it is served from memory alone; otherwise it walks each store via `.next`, merging results with **deduplication** (parent tier preferred on conflicts). Either way the result is identical — Pebble always holds the full set.
 
 ## Store chain
 
 Each store implements a common interface and optionally holds a pointer to the **next** tier. Flush and query operations are **transparent** along the chain:
 
 ```
-MemoryStore → LocalStore (Pebble) → BucketStore (S3 / MinIO)
+MemoryStore (cache) → LocalStore (Pebble) → BucketStore (S3 / MinIO)
 ```
 
-- **Memory**: fastest path for recent logs; bounded by retention flags.
-- **Local**: durable on-disk segments under `--data-dir`.
+- **Memory**: write-through cache holding a policy-selected hot subset; evicted by TTL and size, never flushed downward (Pebble already has the data).
+- **Local**: durable source of truth for every log; on-disk under `--data-dir`.
 - **Bucket**: cold tier; supports **compaction** of time blocks for cheaper scans.
 
 ## Optional async path
@@ -52,4 +52,4 @@ On startup (`logsgo` / `logsGo` binary), the process starts:
 2. REST API (Gin) with optional JWT middleware
 3. Static UI server for the Vite-built dashboard
 
-Graceful shutdown listens for `SIGINT` / `SIGTERM`, cancels the root context, and waits on worker groups. `--flush-on-exit` can force a final flush for stronger persistence guarantees.
+Graceful shutdown listens for `SIGINT` / `SIGTERM`, cancels the root context, and waits on worker groups. Because logs are written through to Pebble on ingest, there is no in-memory-only window to lose; `--flush-on-exit` still governs the local → bucket flush for stronger cold-tier persistence.

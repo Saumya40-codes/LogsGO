@@ -6,18 +6,19 @@ weight: 30
 
 LogsGo keeps writes simple and retention multi-tiered. Each tier optimizes for a different access pattern.
 
-## 1. In-memory store
+## 1. In-memory store (cache)
 
 - Backed by a **skiplist** for O(log n) insertion and query.
-- Ideal for **hot** data and low-latency instant queries.
-- Eviction / flush driven by:
-  - `--max-time-in-mem` (default `1h`)
-  - `--max-logs-in-mem` (default `10000`)
+- A **write-through cache**: every log is persisted to Pebble first, and only logs matching the **cache policy** are additionally kept here to accelerate hot queries. See [Cache policy]({{% ref "/deployment/configuration" %}}).
+- Retained data is bounded by eviction (oldest-first), never flushed downward:
+  - `ttl` / `--max-time-in-mem` (default `1h`) — drop entries older than this
+  - `max_entries` / `--max-logs-in-mem` (default `10000`) — cap on cached entries
+- With no cache config, nothing is cached and all queries are served from Pebble.
 
 ## 2. Local store ([Pebble](https://github.com/cockroachdb/pebble))
 
 - Persistent **on-disk** store under `--data-dir` (default `./data`).
-- Receives flushed memory segments.
+- **Source of truth**: receives every log on ingest, cached or not.
 
 ## 3. Cloud / bucket store
 
@@ -48,7 +49,7 @@ Compaction reduces object count and can improve **range / deep historical** quer
 
 Operations are delegated along `.next`:
 
-- **Flush**: memory → local → bucket
-- **Query**: fan-out / sequential chain with merge and dedupe
+- **Write**: memory writes through to local on ingest; local → bucket flush on schedule
+- **Query**: served from the memory cache when it fully covers the request, otherwise fanned out down the chain with merge and dedupe
 
 You can run **memory + local only** for simpler deployments, or full three-tier for maximum retention at lower cost.

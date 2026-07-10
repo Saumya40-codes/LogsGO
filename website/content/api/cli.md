@@ -12,9 +12,10 @@ Binary entrypoint: `cmd/logsGo` (Cobra). Run `./logsGo --help` for the build you
 |------|---------|-------------|
 | `--data-dir` | `data` | Directory for local log data |
 | `--max-retention-time` | `10d` | Max time block chunks remain on disk (`d`/`h`/`m`/`s`) |
-| `--max-time-in-mem` | `1h` | Time logs remain in memory before flush |
-| `--max-logs-in-mem` | `10000` | Max in-memory logs before flush |
-| `--flush-on-exit` | `false` | Flush to next store on any exit for stronger persistence |
+| `--max-time-in-mem` | `1h` | Cache TTL — evict cached logs older than this (overridden by `ttl` in the cache config) |
+| `--max-logs-in-mem` | `10000` | Cache size cap — max cached logs before oldest-first eviction (overridden by `max_entries`) |
+| `--cache-config-path` | _empty_ | Path to the [cache policy]({{% ref "/deployment/configuration" %}}) YAML; selects which logs are cached in memory |
+| `--flush-on-exit` | `false` | Flush local store to the bucket tier on any exit for stronger cold-tier persistence |
 | `--store-config-path` | _empty_ | Path to S3-compatible store YAML |
 | `--store-config` | _empty_ | Inline store config (exclusive with path) |
 
