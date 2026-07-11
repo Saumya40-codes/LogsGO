@@ -13,7 +13,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.92
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/prometheus/client_golang v1.22.0
-	github.com/rabbitmq/amqp091-go v1.10.0
+	github.com/rabbitmq/amqp091-go v1.12.0
 	github.com/spf13/cobra v1.9.1
 	google.golang.org/grpc v1.81.0
 	google.golang.org/protobuf v1.36.11
