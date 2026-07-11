@@ -1,44 +1,36 @@
 ---
 title: Benchmarks
-description: 1M log load tests — direct gRPC vs RabbitMQ enqueue path.
+description: Ingest, concurrent query, and S3 query reference numbers.
 weight: 80
 ---
 
-Benchmarks live under [`/bench`](https://github.com/Saumya40-codes/LogsGO/tree/main/bench) in the repository (docker-compose driven load tests).
+Numbers from project runs (see also [`/bench`](https://github.com/Saumya40-codes/LogsGO/tree/main/bench)). No in-tree load harness.
 
-## Direct ingestion — 1,000,000 logs
+Setup:
 
-| Metric | Value |
-|--------|------:|
-| Total logs sent | 1,000,000 |
-| Errors | 0 |
-| Success rate | 100% |
-| Total time | **14.318 s** |
-| Logs per second | **~69,839** |
-| Batches success | 500 |
-| Avg batch latency | 562 ms |
-| Min / max batch latency | 49 ms / 963 ms |
+- Pebble local store; MinIO for the S3 path (parquet blocks)
+- Cache: `service=bench` \| `level=error`, `ttl=4m`, `max_entries=100000`
+- **55%** hot (`service=bench`), **45%** cold (`service=other`)
+- Batch 2000, 8 workers; no message queue
 
-## Via message queue — 1,000,000 logs (publish path)
+## Concurrent ingest + query (local)
 
-| Metric | Value |
-|--------|------:|
-| Total logs sent | 1,000,000 |
-| Errors | 0 |
-| Success rate | 100% |
-| Total time | **492 ms** |
-| Logs per second | **~2,031,233** |
-| Avg batch latency | 10 ms |
-| Min / max batch latency | 1 ms / 47 ms |
+| | Ingest | Query |
+|--|-------:|------:|
+| Volume | 1,000,000 logs | 2,000 queries |
+| Errors | 0 | 0 |
+| Wall time | **5.868 s** | **5.981 s** |
+| Throughput | **~170k logs/s** | **~334 qps** |
+| Latency | avg batch 92 ms | avg **11 ms** (1–62 ms) |
 
-The queue path optimizes **producer publish latency** and decoupling; LogsGo workers still perform durable ingestion on the consumer side. Choose based on whether your bottleneck is **app-side blocking** or **server-side persist**.
+## S3 / bucket query path
 
-## Reproduce
+| | Ingest | Query (post-flush) |
+|--|-------:|------:|
+| Volume | 200,000 logs | 1,000 queries |
+| Errors | 0 | 0 |
+| Wall time | **1.065 s** | **4.676 s** |
+| Throughput | **~188k logs/s** | **~214 qps** |
+| Latency | avg batch 81 ms | avg **18 ms** (3–42 ms) |
 
-```bash
-cd bench
-# follow bench/README.md and docker-compose.yml
-docker compose up
-```
-
-Hardware, batch size, store config (memory-only vs full tier), and network all affect numbers — treat these as **reference** results from the project authors’ runs.
+Hardware and flags change absolute numbers; treat tables as reference.

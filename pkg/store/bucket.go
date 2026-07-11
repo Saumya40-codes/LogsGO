@@ -22,7 +22,6 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/prometheus/client_golang/prometheus"
-	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -175,11 +174,9 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 	baseTimeStamp := logs[0].Timestamp
 	nextTimeStamp := getNextTimeStamp(baseTimeStamp, 2*time.Hour)
 
-	batches := &logapi.SeriesBatch{
-		Entries: make([]*logapi.Series, 0),
-	}
+	batch := make([]*logapi.Series, 0)
 	// newer blocks will always be at level 0 retention
-	key := fmt.Sprintf("%d-%d/%s_0.pb", baseTimeStamp, nextTimeStamp, logs[0].Service)
+	key := fmt.Sprintf("%d-%d/%s_0%s", baseTimeStamp, nextTimeStamp, logs[0].Service, blockObjectExt)
 
 	// get metadata
 	metaData, err := b.GetMetaData()
@@ -198,17 +195,17 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 
 		if log.Timestamp > nextTimeStamp {
 			// our logs are sorted, so we can call it end here for one batch
-			err := b.uploadLogsToStorage(batches, key)
+			err := b.uploadLogsToStorage(batch, key)
 			if err != nil {
 				return err
 			}
-			batches.Entries = batches.Entries[:0]
+			batch = batch[:0]
 
 			baseTimeStamp = log.Timestamp
 			nextTimeStamp = getNextTimeStamp(baseTimeStamp, 2*time.Hour)
 
 			// newer blocks will always be at level 0 retention
-			key = fmt.Sprintf("%d-%d/%s_0.pb", baseTimeStamp, nextTimeStamp, log.Service)
+			key = fmt.Sprintf("%d-%d/%s_0%s", baseTimeStamp, nextTimeStamp, log.Service, blockObjectExt)
 		}
 
 		logkey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message, CustomLabels: labelsFingerprint(customLabels)}
@@ -221,16 +218,15 @@ func (b *BucketStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int6
 		if !ok {
 			return fmt.Errorf("timestamp %v not found in logKey series", log.Timestamp)
 		}
-		s := &logapi.Series{
+		batch = append(batch, &logapi.Series{
 			Entry: log,
 			Count: uint64(entry.value),
-		}
-		batches.Entries = append(batches.Entries, s)
+		})
 	}
 
 	// Upload last batch if exists
-	if len(batches.Entries) > 0 {
-		if err := b.uploadLogsToStorage(batches, key); err != nil {
+	if len(batch) > 0 {
+		if err := b.uploadLogsToStorage(batch, key); err != nil {
 			return err
 		}
 	}
@@ -285,7 +281,7 @@ func (b *BucketStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan
 }
 
 func (b *BucketStore) appendSeriesFromBlock(plan *logsgoql.Plan, iterStart, iterEnd int64, blockKey string, seriesByKey map[LogKey][]logsgoql.Sample) error {
-	entries, err := b.loadSeriesFromBlock(blockKey)
+	entries, err := b.scanSeriesFromBlock(blockKey, plan, iterStart, iterEnd)
 	if err != nil {
 		return err
 	}
@@ -294,32 +290,14 @@ func (b *BucketStore) appendSeriesFromBlock(plan *logsgoql.Plan, iterStart, iter
 		if e == nil || e.Entry == nil {
 			continue
 		}
-		ts := e.Entry.Timestamp
-		if ts < iterStart || ts > iterEnd {
-			continue
-		}
-
 		service := e.Entry.Service
 		level := e.Entry.Level
 		message := e.Entry.Message
 		customLabels := normalizeCustomLabels(e.Entry.Labels)
 
-		matched, err := plan.Match(logsgoql.EntryLabels{
-			Service: service,
-			Level:   level,
-			Message: message,
-			Labels:  customLabels,
-		})
-		if err != nil {
-			return err
-		}
-		if !matched {
-			continue
-		}
-
 		logKey := LogKey{Service: service, Level: level, Message: message, CustomLabels: labelsFingerprint(customLabels)}
 		seriesByKey[logKey] = append(seriesByKey[logKey], logsgoql.Sample{
-			Timestamp: ts,
+			Timestamp: e.Entry.Timestamp,
 			Count:     e.Count,
 		})
 	}
@@ -492,7 +470,7 @@ func (b *BucketStore) selectBlocksForWindow(plan *logsgoql.Plan, iterStart, iter
 			if object.Err != nil {
 				return nil, object.Err
 			}
-			if !strings.HasSuffix(object.Key, ".pb") {
+			if !strings.HasSuffix(object.Key, blockObjectExt) {
 				continue
 			}
 			minT, maxT, svc, ok := parseBlockKey(object.Key)
@@ -558,7 +536,7 @@ func (b *BucketStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql
 	outByKey := make(map[LogKey][]logsgoql.Sample)
 
 	for _, blk := range blocks {
-		entries, err := b.loadSeriesFromBlock(blk.key)
+		entries, err := b.scanSeriesFromBlock(blk.key, plan, iterStart, iterEnd)
 		if err != nil {
 			return nil, err
 		}
@@ -577,27 +555,10 @@ func (b *BucketStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql
 				continue
 			}
 			ts := e.Entry.Timestamp
-			if ts < iterStart || ts > iterEnd {
-				continue
-			}
-
 			service := e.Entry.Service
 			level := e.Entry.Level
 			message := e.Entry.Message
 			customLabels := normalizeCustomLabels(e.Entry.Labels)
-
-			matched, err := plan.Match(logsgoql.EntryLabels{
-				Service: service,
-				Level:   level,
-				Message: message,
-				Labels:  customLabels,
-			})
-			if err != nil {
-				return nil, err
-			}
-			if !matched {
-				continue
-			}
 
 			key := LogKey{Service: service, Level: level, Message: message, CustomLabels: labelsFingerprint(customLabels)}
 			st := stateByKey[key]
@@ -664,11 +625,11 @@ func (b *BucketStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql
 	return results, nil
 }
 
-func (b *BucketStore) uploadLogsToStorage(batch *logapi.SeriesBatch, objectName string) error {
+func (b *BucketStore) uploadLogsToStorage(entries []*logapi.Series, objectName string) error {
 	b.metrics.BucketCalls.Inc()
-	data, err := proto.Marshal(batch)
+	data, err := encodeSeriesParquet(entries)
 	if err != nil {
-		return fmt.Errorf("failed to marshal protobuf: %w", err)
+		return fmt.Errorf("failed to encode parquet block: %w", err)
 	}
 
 	reader := bytes.NewReader(data)
@@ -679,14 +640,14 @@ func (b *BucketStore) uploadLogsToStorage(batch *logapi.SeriesBatch, objectName 
 		reader,
 		int64(len(data)),
 		minio.PutObjectOptions{
-			ContentType: "application/octet-stream",
+			ContentType: "application/vnd.apache.parquet",
 		},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upload to S3 storage: %w", err)
 	}
 
-	log.Println("Uploaded log to S3")
+	log.Println("Uploaded parquet block to S3")
 	return nil
 }
 
@@ -715,26 +676,27 @@ func (b *BucketStore) LabelValues(labels *Labels) error {
 }
 
 func (b *BucketStore) loadSeriesFromBlock(objectKey string) ([]*logapi.Series, error) {
+	// Full-block materialization (compaction): one bulk GET is cheaper than
+	// many range ReadAts for footer + every column page.
 	b.metrics.BucketCalls.Inc()
-	ctx := b.ctx
-
-	obj, err := b.client.GetObject(ctx, b.config.Bucket, objectKey, minio.GetObjectOptions{})
+	obj, err := b.client.GetObject(b.ctx, b.config.Bucket, objectKey, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get object %s: %w", objectKey, err)
+		return nil, fmt.Errorf("get object %s: %w", objectKey, err)
 	}
 	defer obj.Close()
-
 	data, err := io.ReadAll(obj)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read object %s: %w", objectKey, err)
+		return nil, fmt.Errorf("read object %s: %w", objectKey, err)
 	}
+	return loadAllSeriesFromParquet(bytes.NewReader(data), int64(len(data)))
+}
 
-	batch := &logapi.SeriesBatch{}
-	if err := proto.Unmarshal(data, batch); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal data from %s: %w", objectKey, err)
+func (b *BucketStore) scanSeriesFromBlock(objectKey string, plan *logsgoql.Plan, iterStart, iterEnd int64) ([]*logapi.Series, error) {
+	ra, err := newS3ReaderAt(b.ctx, b.client, b.config.Bucket, objectKey, b.metrics)
+	if err != nil {
+		return nil, err
 	}
-
-	return batch.Entries, nil
+	return seriesFromParquetReaderAt(ra, ra.Size(), plan, iterStart, iterEnd)
 }
 
 func (b *BucketStore) GetMetaData() (*Labels, error) {

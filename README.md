@@ -16,7 +16,7 @@
 -  **Multi-tiered store architecture**:
     - **In-memory cache** → a write-through, policy-driven cache (Skiplist, O(logn) insert/query) that retains only the logs you mark as hot for low-latency queries.
     - **Local store** → durable source of truth for every log, persisted by [Pebble](https://github.com/cockroachdb/pebble).
-    - **Cloud store** → support for S3-compatible services like AWS S3 or MinIO.
+    - **Cloud store** → S3-compatible object storage (AWS S3, MinIO) holding Parquet time blocks read via range GETs.
 -  **Policy-driven caching**: Define which logs stay hot in memory via a YAML cache policy (`--cache-config-path`) using the same query language as reads; everything is still persisted durably to Pebble. See [`examples/cache-config.yaml`](examples/cache-config.yaml).
 -  **Chained store design**: Each store passes query and flush operations to its `.next` store for transparent fallbacks and deep queries.
 -  **Custom query language**: Enables querying logs with `AND`/`OR` operators. Example:

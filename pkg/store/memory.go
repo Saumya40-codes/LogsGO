@@ -21,7 +21,7 @@ const defaultEvictionInterval = time.Minute
 // forwarded to the next (durable) store; only logs matching the cache policy
 // are additionally retained here to accelerate hot queries.
 type MemoryStore struct {
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	stopOnce   sync.Once
 	next       *Store
 	ttl        time.Duration
@@ -105,7 +105,13 @@ func (m *MemoryStore) Insert(logs []*logapi.LogEntry, _ map[LogKey]map[int64]Cou
 		if m.series[key] == nil {
 			m.series[key] = make(map[int64]CounterValue)
 		}
+		_, already := m.series[key][ts]
 		m.series[key][ts] = fullSeries[key][ts]
+		if already {
+			// Count-only update: keep one skiplist entry per (series, ts) so
+			// reads do not walk one Value per ingested log.
+			continue
+		}
 		m.skipList.Insert(ts, internal.Value{Service: lg.Service, Level: lg.Level, Message: lg.Message, Labels: cloneLabels(customLabels)})
 		incMetaLabels(&m.meta, lg.Service, lg.Level, customLabels)
 		m.totalLogs++
@@ -133,8 +139,8 @@ func (m *MemoryStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan
 		next = nil
 	}
 	return tieredSeries(queryCtx, plan, 0, next, func() ([]logsgoql.Series, error) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
+		m.mu.RLock()
+		defer m.mu.RUnlock()
 		return m.getSeries(queryCtx, plan)
 	})
 }
@@ -145,8 +151,8 @@ func (m *MemoryStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql
 		next = nil
 	}
 	return tieredSeries(queryCtx, plan, resolution, next, func() ([]logsgoql.Series, error) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
+		m.mu.RLock()
+		defer m.mu.RUnlock()
 		return m.getSeries(queryCtx, plan)
 	})
 }
@@ -160,8 +166,8 @@ func (m *MemoryStore) covers(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan
 	}
 	start, _ := seriesIterWindow(queryCtx)
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.totalLogs == 0 {
 		return false
 	}
@@ -285,7 +291,7 @@ func (m *MemoryStore) startEvictionTimer() {
 // LabelValues returns the unique label values from this store's cache merged
 // with the durable stores below it.
 func (m *MemoryStore) LabelValues(labels *Labels) error {
-	m.mu.Lock()
+	m.mu.RLock()
 	*labels = emptyLabels()
 	maps.Copy(labels.Services, m.meta.Services)
 	maps.Copy(labels.Levels, m.meta.Levels)
@@ -293,7 +299,7 @@ func (m *MemoryStore) LabelValues(labels *Labels) error {
 		labels.CustomLabels[label] = make(map[string]int)
 		maps.Copy(labels.CustomLabels[label], values)
 	}
-	m.mu.Unlock()
+	m.mu.RUnlock()
 
 	if m.next != nil {
 		if localStore, ok := (*m.next).(*LocalStore); ok {

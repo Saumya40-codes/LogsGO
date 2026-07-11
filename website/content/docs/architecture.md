@@ -34,7 +34,7 @@ MemoryStore (cache) → LocalStore (Pebble) → BucketStore (S3 / MinIO)
 
 - **Memory**: write-through cache holding a policy-selected hot subset; evicted by TTL and size, never flushed downward (Pebble already has the data).
 - **Local**: durable source of truth for every log; on-disk under `--data-dir`.
-- **Bucket**: cold tier; supports **compaction** of time blocks for cheaper scans.
+- **Bucket**: cold tier; Parquet time blocks on S3/MinIO with ranged reads and **compaction** for cheaper deep scans.
 
 ## Optional async path
 

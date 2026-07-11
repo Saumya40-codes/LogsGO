@@ -36,7 +36,7 @@ Query results are often returned as **series**: an entry shape plus a **count** 
 
 ## Blocks and retention
 
-On disk and in object storage, data is organized into **time blocks** / chunks. Retention is controlled by `--max-retention-time` (default `10d`) for how long block chunks remain. Memory residency is separate (`--max-time-in-mem`, `--max-logs-in-mem`).
+On disk (Pebble) and in object storage, data is organized into **time blocks**. Bucket blocks are Parquet objects keyed as `{start}-{end}/{service}_{level}.parquet`. Retention is controlled by `--max-retention-time` (default `10d`) for how long local/block data remain. Memory cache residency is separate (`ttl` / `max_entries` via cache config, or `--max-time-in-mem` / `--max-logs-in-mem`).
 
 ## Deduplication across tiers
 
