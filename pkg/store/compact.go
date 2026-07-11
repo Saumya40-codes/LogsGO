@@ -171,7 +171,7 @@ func (b *BucketStore) listAndCategorizeBlocks() ([]BlockInfo, error) {
 	return blocks, nil
 }
 
-// our object key format is: "startTime-endTime/service_LEVEL.pb"
+// our object key format is: "startTime-endTime/service_LEVEL.parquet"
 func (b *BucketStore) parseBlockInfo(objectKey string, lastModified time.Time) (BlockInfo, error) {
 	parts := strings.Split(objectKey, "/")
 	if len(parts) != 2 {
@@ -200,8 +200,8 @@ func (b *BucketStore) parseBlockInfo(objectKey string, lastModified time.Time) (
 		return BlockInfo{}, errors.New("invalid time range: min timestamp must be less than max timestamp")
 	}
 
-	if strings.HasSuffix(serviceAndLevel, ".pb") {
-		serviceAndLevel = strings.TrimSuffix(serviceAndLevel, ".pb")
+	if strings.HasSuffix(serviceAndLevel, blockObjectExt) {
+		serviceAndLevel = strings.TrimSuffix(serviceAndLevel, blockObjectExt)
 	} else {
 		return BlockInfo{}, errors.New("invalid service and level format")
 	}
@@ -483,15 +483,11 @@ func (b *BucketStore) cleanUpOldBlocks(blocks []BlockInfo, config CompactConfig)
 func (b *BucketStore) generateCompactedBlockKey(blocks []BlockInfo, targetLevel int, minT, maxT int64) string {
 	service := blocks[0].Service
 	levelSuffix := fmt.Sprintf("_%d", targetLevel)
-	return fmt.Sprintf("%d-%d/%s%s.pb", minT, maxT, service, levelSuffix)
+	return fmt.Sprintf("%d-%d/%s%s%s", minT, maxT, service, levelSuffix, blockObjectExt)
 }
 
 func (b *BucketStore) writeCompactedBlock(key string, series []*logapi.Series) error {
-	batch := &logapi.SeriesBatch{
-		Entries: series,
-	}
-
-	return b.uploadLogsToStorage(batch, key)
+	return b.uploadLogsToStorage(series, key)
 }
 
 func (b *BucketStore) addCompactedBlockIndex(service string, e IndexEntry) error {

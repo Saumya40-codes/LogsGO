@@ -28,7 +28,7 @@ import (
 // LocalStore implements the Store interface using a persistent pebble kv store
 type LocalStore struct {
 	db            *pkg.DB
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	stopOnce      sync.Once
 	maxTimeInDisk time.Duration // Maximum time in disk, after which logs are flushed to the next store
 	// lastFlushTime int64 // Timestamp of the last flush operation
@@ -54,7 +54,7 @@ func NewLocalStore(dataDir string, next *Store, maxTimeInDisk string, flushOnExi
 
 	lstore := &LocalStore{
 		db:            db,
-		mu:            sync.Mutex{},
+		mu:            sync.RWMutex{},
 		next:          next,
 		shutdown:      make(chan struct{}),
 		maxTimeInDisk: pkg.GetTimeDuration(maxTimeInDisk),
@@ -89,43 +89,38 @@ func NewLocalStore(dataDir string, next *Store, maxTimeInDisk string, flushOnExi
 }
 
 func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64]CounterValue, flushID string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	timer := prometheus.NewTimer(l.metrics.IngestionDuration.WithLabelValues("local"))
 	defer timer.ObserveDuration()
 
-	// open meta.json file to store all unique labels for this store
 	if len(logs) == 0 {
 		return nil
 	}
 
-	file, err := getMetaFile(l.dataDir)
-	if err != nil {
-		return fmt.Errorf("failed to open required files in data dir: %w", err)
-	}
-	defer file.Close()
-
-	metaLabels := emptyLabels()
-
-	if err := parseLabelsFromFile(file, &metaLabels); err != nil {
-		return fmt.Errorf("failed to parse meta labels: %w", err)
+	// RLock for the Pebble write: concurrent with Series (also RLock), exclusive
+	// vs Flush/Close (Lock). Prevents late keys landing after a flush scan and
+	// being deleted without upload.
+	l.mu.RLock()
+	if l.db == nil || l.db.Conn == nil || l.db.IsClosed() {
+		l.mu.RUnlock()
+		return fmt.Errorf("local store is closed")
 	}
 
 	batch := l.db.Conn.NewBatch()
-	defer batch.Close()
-
 	for _, log := range logs {
 		customLabels := normalizeCustomLabels(log.Labels)
 		key := buildLocalStoreKey(log.Timestamp, log.Level, log.Service, log.Message, customLabels)
 		logKey := LogKey{Service: log.Service, Level: log.Level, Message: log.Message, CustomLabels: labelsFingerprint(customLabels)}
 		logSeries, ok := series[logKey]
 		if !ok {
+			batch.Close()
+			l.mu.RUnlock()
 			return fmt.Errorf("logKey %v not found in series", logKey)
 		}
 
 		entry, ok := logSeries[log.Timestamp]
 		if !ok {
+			batch.Close()
+			l.mu.RUnlock()
 			return fmt.Errorf("timestamp %v not found in logKey series", log.Timestamp)
 		}
 
@@ -134,23 +129,45 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 			Labels: customLabels,
 		})
 		if err != nil {
+			batch.Close()
+			l.mu.RUnlock()
 			return err
 		}
 		if err := batch.Set(key, valueBytes, nil); err != nil {
+			batch.Close()
+			l.mu.RUnlock()
 			return fmt.Errorf("failed to save log to DB: %w", err)
 		}
-
-		incMetaLabels(&metaLabels, log.Service, log.Level, customLabels)
 	}
 
 	if err := batch.Commit(pebble.Sync); err != nil {
+		batch.Close()
+		l.mu.RUnlock()
 		return fmt.Errorf("failed to commit local insert batch: %w", err)
 	}
+	batch.Close()
+	l.mu.RUnlock()
 
 	l.metrics.LogsIngested.WithLabelValues("local").Add(float64(len(logs)))
 	l.metrics.CurrentLogsIngested.WithLabelValues("local").Add(float64(len(logs)))
 
-	// Write the updated meta labels to the file
+	// Serialize meta.json updates only.
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	file, err := getMetaFile(l.dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to open required files in data dir: %w", err)
+	}
+	defer file.Close()
+
+	metaLabels := emptyLabels()
+	if err := parseLabelsFromFile(file, &metaLabels); err != nil {
+		return fmt.Errorf("failed to parse meta labels: %w", err)
+	}
+	for _, log := range logs {
+		incMetaLabels(&metaLabels, log.Service, log.Level, normalizeCustomLabels(log.Labels))
+	}
 	if err := writeLabelsToFile(file, metaLabels, l.dataDir); err != nil {
 		return fmt.Errorf("failed to write meta labels to file: %w", err)
 	}
@@ -159,16 +176,16 @@ func (l *LocalStore) Insert(logs []*logapi.LogEntry, series map[LogKey]map[int64
 
 func (l *LocalStore) Series(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan) ([]logsgoql.Series, error) {
 	return tieredSeries(queryCtx, plan, 0, l.next, func() ([]logsgoql.Series, error) {
-		l.mu.Lock()
-		defer l.mu.Unlock()
+		l.mu.RLock()
+		defer l.mu.RUnlock()
 		return l.getSeries(queryCtx, plan)
 	})
 }
 
 func (l *LocalStore) SeriesRange(queryCtx logsgoql.QueryContext, plan *logsgoql.Plan, resolution int64) ([]logsgoql.Series, error) {
 	return tieredSeries(queryCtx, plan, resolution, l.next, func() ([]logsgoql.Series, error) {
-		l.mu.Lock()
-		defer l.mu.Unlock()
+		l.mu.RLock()
+		defer l.mu.RUnlock()
 		return l.getSeries(queryCtx, plan)
 	})
 }
@@ -386,8 +403,8 @@ func (l *LocalStore) Close() error {
 
 // LabelValues returns the unique label values from the local store.
 func (l *LocalStore) LabelValues(labels *Labels) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 
 	metaLabels := emptyLabels()
 	file, err := getMetaFile(l.dataDir)

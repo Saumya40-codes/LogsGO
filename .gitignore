@@ -1,4 +1,7 @@
 ./cmd/logsGo/logsgo
 logsGo
-data/website/public/
+data/
+website/public/
 website/.hugo_build.lock
+bench/data/
+bench/data-s3/

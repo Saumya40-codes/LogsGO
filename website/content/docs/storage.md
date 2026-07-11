@@ -11,8 +11,8 @@ LogsGo keeps writes simple and retention multi-tiered. Each tier optimizes for a
 - Backed by a **skiplist** for O(log n) insertion and query.
 - A **write-through cache**: every log is persisted to Pebble first, and only logs matching the **cache policy** are additionally kept here to accelerate hot queries. See [Cache policy]({{% ref "/deployment/configuration" %}}).
 - Retained data is bounded by eviction (oldest-first), never flushed downward:
-  - `ttl` / `--max-time-in-mem` (default `1h`) — drop entries older than this
-  - `max_entries` / `--max-logs-in-mem` (default `10000`) — cap on cached entries
+  - `ttl` / `--max-time-in-mem` (default `1h`): drop entries older than this
+  - `max_entries` / `--max-logs-in-mem` (default `10000`): cap on cached entries
 - With no cache config, nothing is cached and all queries are served from Pebble.
 
 ## 2. Local store ([Pebble](https://github.com/cockroachdb/pebble))
@@ -36,14 +36,25 @@ remote_store:
 
 Pass with `--store-config-path=store_config.yaml` or inline `--store-config=...` (mutually exclusive).
 
+### Block format
+
+Cold-tier blocks are **Parquet** objects (`{start}-{end}/{service}_{level}.parquet`).
+This replaces the previous protobuf (`.pb`) block format (no dual-read; re-flush or re-ingest older data if needed):
+
+- **Dictionary** encoding on `service` / `level` / `message` / `labels`
+- **Delta** encoding on `timestamp` / `count`
+- **Zstd** page compression; bloom filters on `level` and `service`
+- Queries open blocks via S3 **range GETs** (`io.ReaderAt`): footer first, then row groups that survive time/bloom/bounds pruning (full rows within a kept row group)
+- Compaction loads whole objects in one GET (cheaper than many ranges for a full scan)
+
 ## Compaction
 
 Object-store blocks can be **compacted** (e.g. several 2h blocks into one 12h block) on a schedule:
 
-- `--compact-duration` (default `12h`) — how often compaction cycles run
+- `--compact-duration` (default `12h`): how often compaction cycles run
 - Internal compact configuration controls block windows / downsampling behavior
 
-Compaction reduces object count and can improve **range / deep historical** query performance.
+Compaction merges source Parquet blocks into a coarser `.parquet` object (same schema), reducing object count for deep historical queries.
 
 ## Chaining semantics
 
