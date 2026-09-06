@@ -2,10 +2,10 @@ package store
 
 import (
 	"bytes"
-	"math"
-	"encoding/json"
+	json "encoding/json/v2"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	logapi "github.com/Saumya40-codes/LogsGO/api/grpc/pb"

@@ -3,7 +3,7 @@ package store
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
+	json "encoding/json/v2"
 	"sort"
 	"strings"
 )
@@ -87,7 +87,7 @@ func labelsFromFingerprint(fingerprint string) map[string]string {
 		return nil
 	}
 
-	labels := make(map[string]string)
+	labels := make(map[string]string, countByte([]byte(fingerprint), customLabelSeparator)/2+1)
 	for i := 0; i+1 < len(parts); i += 2 {
 		if len(parts[i]) == 0 {
 			continue

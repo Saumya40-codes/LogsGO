@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -482,10 +482,17 @@ func getMetaFile(dir string) (*os.File, error) {
 
 func parseLabelsFromFile(file *os.File, labels *Labels) error {
 	*labels = emptyLabels()
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("failed to seek to metadata start: %w", err)
+	}
+	if info, err := file.Stat(); err != nil {
+		return fmt.Errorf("failed to stat metadata file: %w", err)
+	} else if info.Size() == 0 {
+		return nil
+	}
 
 	var metaLabels Labels
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&metaLabels); err != nil {
+	if err := json.UnmarshalRead(file, &metaLabels); err != nil {
 		// if EOF is reached, it means the file is empty or not yet initialized
 		if errors.Is(err, io.EOF) {
 			return nil
@@ -511,8 +518,7 @@ func writeLabelsToFile(file *os.File, labels Labels, dir string) error {
 		return fmt.Errorf("failed to create temp file for meta labels: %w", err)
 	}
 	defer tempFile.Close()
-	encoder := json.NewEncoder(tempFile)
-	if err := encoder.Encode(labels); err != nil {
+	if err := json.MarshalWrite(tempFile, labels); err != nil {
 		return fmt.Errorf("failed to encode meta labels to temp file: %w", err)
 	}
 	if err := tempFile.Sync(); err != nil {
